@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.autograd import Variable
 import os
+from datetime import datetime
 
 BATCH_SIZE = 128
 GAMMA = 0.999
@@ -39,19 +40,21 @@ class BaseAgent:
     def optimize_model(self, batch, **kwargs):
         pass
     
-    def save_model(self, suffix="", actor_path=None):
+    def save_model(self, suffix="", agent_path=None):
         if not os.path.exists('models/'):
             os.makedirs('models/')
 
-        if actor_path is None:
-            actor_path = "models/{}_{}".format(self.name, suffix)
-        print('Saving model to {}'.format(actor_path))
-        torch.save(self.net.state_dict(), actor_path)
+        if len(suffix) <= 0:
+            suffix = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        if agent_path is None:
+            agent_path = "models/{}_{}".format(self.name, suffix)
+        print('Saving model to {}'.format(agent_path))
+        torch.save(self.net.state_dict(), agent_path)
 
-    def load_model(self, actor_path):
-        print('Loading model from {}'.format(actor_path))
+    def load_model(self, agent_path):
+        print('Loading model from {}'.format(agent_path))
         if actor_path is not None:
-            self.net.load_state_dict(torch.load(actor_path).to(self.device))
+            self.net.load_state_dict(torch.load(agent_path).to(self.device))
 
 class DqnAgent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01):
@@ -126,9 +129,13 @@ class DqnAgent(BaseAgent):
         
 # Agent for following consensus protocol
 class LearnerAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False):
         super().__init__(device, N)
-        self.net = ActionNet(N, ns, na, hidden, action_range)
+        self.centralized = centralized
+        if centralized:
+            
+        else:
+            self.net = ActionNet(N, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.needsExpert = True
         self.name = 'LearnerAgent'
@@ -147,21 +154,30 @@ class LearnerAgent(BaseAgent):
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
+        # Find loss & optimize the model
+        self.net.train() 
         pred_action = self.net(state_batch.view(B, -1, self.N)) # Shape should be (B,na)??
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
-        # Find loss & optimize the model
-        self.net.train()
         self.optimizer.zero_grad()
         loss = torch.nn.functional.mse_loss(action_batch, pred_action)
         loss.backward()
         self.optimizer.step()
+        
+        # Check sizes - attach real size after those lines.
+        print(state_batch.shape)
+        print(action_batch.shape, pred_action.shape)
+        print(reward_batch.shape)
 
 # Agent for leaning reward
 class RewardAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01, centralized=False):
         super().__init__(device, N)
-        self.net = RewardNet(N, ns, na, hidden)
+        self.centralized = centralized
+        if centralized:
+            
+        else:
+            self.net = RewardNet(N, ns, na, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.na = na
         self.name = 'RewardAgent'
@@ -189,14 +205,14 @@ class RewardAgent(BaseAgent):
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
+        # Find loss & optimize the model
+        self.net.train()
 #         print("State batch shape = ", state_batch.view(B, -1, self.N).shape, "; action shape = ", action_batch.view(B, -1, 1).shape)
         pred_reward = self.net(
             state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1)
         ) # Shape is (B,ns,N) and (B,na) for input and (B, ) for output??
 #         print("Reward batch shape = ", reward_batch.shape, "; prediction shape = ", pred_reward.shape)
 
-        # Find loss & optimize the model
-        self.net.train()
         self.optimizer.zero_grad()
         loss = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
         loss.backward()
@@ -204,9 +220,13 @@ class RewardAgent(BaseAgent):
         
 # Agent for leaning action by multiplying it with reward...?
 class RewardActionAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False):
         super().__init__(device, N)
-        self.net = ActionNet(N, ns, na, hidden, action_range)
+        self.centralized = centralized
+        if centralized:
+            
+        else:
+            self.net = ActionNet(N, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.name = 'RewardActionAgent'
         
@@ -235,7 +255,7 @@ class RewardActionAgent(BaseAgent):
         self.optimizer.step()
         
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
-          BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None):
+          BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020):
     # Batch History
     state_pool = []
     action_pool = []
@@ -247,6 +267,11 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
     
     # Values that would be useful
     N = env.N
+    # Note that the seed only controls the numpy random, which affects the environment.
+    # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
+    np.random.seed(seed)
+#     torch.manual_seed(seed)
+    test_seeds = np.random.randint(0, 5392644, size=(num_episode // test_interval))
 
     for e in range(num_episode):
         steps = 0
@@ -298,20 +323,27 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             print("Episode ", e, " finished; t = ", t)
         
         if e % test_interval == 0:
-            print("Test result at episode ", e)
-            test_hist = test(agent, env, num_test, num_iteration, num_sample, action_space)
+            print("Test result at episode ", e, ": ")
+            test_hist = test(agent, env, num_test, num_iteration, num_sample, action_space, seed=test_seeds[int(e/test_interval)])
             test_hists.append(test_hist)
     return test_hists
 
-def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1]):
+def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020):
     reward_hist_hst = []
     N=env.N
+    # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
+#     torch.manual_seed(seed)
+    np.random.seed(seed)
+    env_seeds = np.random.randint(0, 31102528, size=num_test)
+    print(env_seeds)
+    
     for e in range(num_test):
         steps = 0
         agent.net.eval()
         cum_reward = 0
         reward_hist = []
 
+        np.random.seed(env_seeds[e])
         state = env.reset()
         state = torch.from_numpy(state).float()
         state = Variable(state)
@@ -338,9 +370,9 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
             steps += 1
 
             if done:
-                print("Took ", t, " steps to converge")
+#                 print("Took ", t, " steps to converge")
                 break
-        print("Finished episode ", e, " with ", t, #" steps, and rewards = ", reward, 
-              ";\ncumulative reward = ", cum_reward)
+        print("Finished test ", e, " with ", t, #" steps, and rewards = ", reward, 
+              "; cumulative reward = ", cum_reward)
         reward_hist_hst.append(reward_hist)
     return reward_hist_hst

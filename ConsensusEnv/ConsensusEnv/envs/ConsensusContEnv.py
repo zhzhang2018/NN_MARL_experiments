@@ -18,7 +18,7 @@ class ConsensusContEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.01, o_radius=0.4,
+    def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[]):
         super(ConsensusContEnv, self).__init__()
         
@@ -82,6 +82,12 @@ class ConsensusContEnv(gym.Env):
 
         # Store extra features
         self.additional_features = additional_features
+
+        # Checks if the agents have cuddled together long enough
+        self.done_count = 0
+        self.done_thres = 5
+        self.done_v_lim = 0.02*self.v_max
+        self.done_a_lim = 0.02*self.a_max
     
     # This is probably not needed for continuous action space.
     def translate_action_to_v(self, action):
@@ -155,7 +161,15 @@ class ConsensusContEnv(gym.Env):
 
         # Check if it's ended / deserves to end by verifying distances between agents
         ### TODO: Proposal to make "done" criterion include near-zero speed and acceleration 
-        done = (diff_norm <= self.Delta).all()
+        done = (diff_norm <= self.Delta).all() and (np.abs(self.state[2:4]) <= self.done_v_lim).all()
+        done = done and (np.abs(self.state[4:]) <= self.done_a_lim).all()
+        if done:
+            # Only grant it as "done" if it has lasted long enough
+            self.done_count += 1
+            done = self.done_count >= self.done_thres
+        else:
+            self.done_count = 0
+        # print(done, self.done_count, self.done_thres)
 
         # Modify the state so that each agent is bounded
         self.state = temp_state

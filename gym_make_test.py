@@ -18,7 +18,7 @@ O_ACCELERATION = 2
 env = gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N, dt=0.1, Delta=0.05,
               input_type=U_ACCELERATION, observe_type=O_VELOCITY).unwrapped
 
-for i in range(5):
+for i in range(15):
 	act = env.controller()
 	# print(act)
 	next_state, reward, done, _ = env.step(act)
@@ -31,6 +31,6 @@ for i in range(20):
 	# print(act)
 	next_state, reward, done, _ = env.step(-act)
 	# print(next_state, reward, done)
-	print(env.state)
+	# print(env.state)
 	env.render()
 	time.sleep(0.5)
