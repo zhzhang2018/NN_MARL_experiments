@@ -75,3 +75,22 @@ class ActionNet(nn.Module):
         x = torch.tanh(self.fc3(x)) # Range = [-1,1]
         return x * self.range * 0.5 + self.offset
 
+# Implements a net that tries to predict an energy function.
+# Input: (B, N, ns) or (B, ns, N)
+# Output: (B, 1)
+class EnergyNet(nn.Module):
+    def __init__(self, N, ns=2, hidden=24):
+        super(EnergyNet, self).__init__()
+        self.N = N # Number of agents
+        self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
+        self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.fc3 = nn.Linear(hidden, 1)
+
+    def forward(self, x):
+        x = self.flt(x)
+        x = torch.tanh(self.fc1(x))
+        x = torch.tanh(self.fc2(x))
+        x = torch.tanh(self.fc3(x)) 
+        return x
+

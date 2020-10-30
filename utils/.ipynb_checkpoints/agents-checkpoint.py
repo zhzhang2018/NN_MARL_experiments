@@ -133,7 +133,7 @@ class LearnerAgent(BaseAgent):
         super().__init__(device, N)
         self.centralized = centralized
         if centralized:
-            
+            pass
         else:
             self.net = ActionNet(N, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
@@ -156,7 +156,7 @@ class LearnerAgent(BaseAgent):
 
         # Find loss & optimize the model
         self.net.train() 
-        pred_action = self.net(state_batch.view(B, -1, self.N)) # Shape should be (B,na)??
+        pred_action = self.net(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
         self.optimizer.zero_grad()
@@ -165,9 +165,9 @@ class LearnerAgent(BaseAgent):
         self.optimizer.step()
         
         # Check sizes - attach real size after those lines.
-        print(state_batch.shape)
-        print(action_batch.shape, pred_action.shape)
-        print(reward_batch.shape)
+#         print(state_batch.shape)
+#         print(action_batch.shape, pred_action.shape)
+#         print(reward_batch.shape)
 
 # Agent for leaning reward
 class RewardAgent(BaseAgent):
@@ -175,7 +175,7 @@ class RewardAgent(BaseAgent):
         super().__init__(device, N)
         self.centralized = centralized
         if centralized:
-            
+            pass
         else:
             self.net = RewardNet(N, ns, na, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
@@ -224,7 +224,7 @@ class RewardActionAgent(BaseAgent):
         super().__init__(device, N)
         self.centralized = centralized
         if centralized:
-            
+            pass
         else:
             self.net = ActionNet(N, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
@@ -254,6 +254,88 @@ class RewardActionAgent(BaseAgent):
         loss.backward()
         self.optimizer.step()
         
+# Agent for learning a gradient-based method.
+# Let's only consider velocity action outputs for now... 
+class GradientAgent(BaseAgent):
+    def __init__(self, device, N, ns=2, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False):
+        super().__init__(device, N)
+        self.centralized = centralized
+        if centralized:
+            pass
+        else:
+            self.net = EnergyNet(N, 2, hidden)
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.needsExpert = True
+        self.name = 'GradientAgent'
+#         self.action_range = action_range
+        self.range = action_range[1] - action_range[0]
+        self.offset = 0.5*(action_range[0]+action_range[1])
+        self.na = 2
+    
+    def getNextState(self, observed_state, action, dt=0.01):
+        # Input: observed_state is a (M,2+,N) array, and action is (M,2). Each agent corresponds to a row.
+        # Output: Supposedly, a (M,2,N) array that contains the expected new observed state.
+        # Right now we're manually giving the agent a sense of its own dynamics with velocity input (single integrator)...
+        # Hopefully it could go automatically soon.
+        # Limitation: Doens't know if 0 means "not observed" or "already together". By default we assume the first. 
+        # Thus, we first get a M*N matrix that records the neighbor information
+        M,_,N = observed_state.shape
+        is_neighbor = np.zeros((M,N))
+        is_neighbor[ (observed_state[:,0,:]!=0) & (observed_state[:,1,:]!=0) ] = 1
+        # Next, find the new relative distances based on the action. Assuming action means velocity, and we use a small dt.
+        new_dists = observed_state[:,:2,:] - dt * action.reshape(M,2,1) # Broadcast action (M,2) to (M,2,N)
+        # Filter out unobserved states
+        new_dists *= is_neighbor.reshape(M,1,N)
+        return new_dists
+    
+    def getEnergy(self, observed_state):
+        # This is the expert that finds the energy function for each agent, but shhh don't let the rest know
+        # Input: observed_state, expecting shape to be (N,no,N), as per the current environment, and be full of distance norms
+        # Output: Probably (N,1), one for each agent. Let's make it only dependent on position for now; use velocity later.
+        sum_dists = np.sum(np.linalg.norm(observed_state[:,:2,:], ord=2, axis=1), axis=1)
+        return sum_dists
+    
+    # Picks an action based on given state.
+    def select_action(self, state, **kwargs):
+        # Input shape: state has shape (ns,N)
+        with torch.no_grad():
+            # Find gradients in both action space directions
+            dt = 0.01
+            da = 0.1
+            sample_ax1p = self.getNextState(state.view(1,-1,self.N).detach().numpy(), np.array([[da,0]]).astype('float32'), dt) # Now shape: (1,2,N)
+            sample_ax1n = self.getNextState(state.view(1,-1,self.N).detach().numpy(), np.array([[-da,0]]).astype('float32'), dt)
+            sample_ax1p = self.net(torch.from_numpy(sample_ax1p)).squeeze().detach().numpy()
+            sample_ax1n = self.net(torch.from_numpy(sample_ax1n)).squeeze().detach().numpy()
+            sample_ax2p = self.net(
+                torch.from_numpy(self.getNextState(state.view(1,-1,self.N).detach().numpy(), 
+                                np.array([[0,da]]).astype('float32'), dt))).squeeze().detach().numpy()
+            sample_ax2n = self.net(
+                torch.from_numpy(self.getNextState(state.view(1,-1,self.N).detach().numpy(), 
+                                np.array([[0,-da]]).astype('float32'), dt))).squeeze().detach().numpy()
+            
+            # Calculate approximate gradient
+            action_dir = np.array([(sample_ax1p-sample_ax1n), (sample_ax2p-sample_ax2n)])*2/da/dt
+#             print(action_dir)
+            return np.clip(action_dir, -1,1)
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        
+        # Find loss & optimize the model
+        self.net.train() 
+        pred_energy = self.net(state_batch.view(B, -1, self.N)[:,:2,:]).squeeze() # Input shape should be (B,no,N) and output be (B,1)
+        energy = torch.from_numpy(self.getEnergy(state_batch.view(B, -1, self.N).detach().numpy()))
+#         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
+
+        self.optimizer.zero_grad()
+        loss = torch.nn.functional.mse_loss(energy, pred_energy)
+        print(loss)
+        loss.backward()
+        self.optimizer.step()
+
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020):
     # Batch History
@@ -308,17 +390,19 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             state = next_state
             steps += 1
 
-            if len(memory) >= BATCH_SIZE:
-                transitions = memory.sample(BATCH_SIZE)
-                batch = Transition(*zip(*transitions))
-                agent.optimize_model(batch, **{'B':BATCH_SIZE})
-            
             if debug:
                 env.render()
 
             if debug and done:
                 print("Took ", t, " steps to converge")
                 break
+                
+        # Update 1028: Moved this training step outside the loop
+        if len(memory) >= BATCH_SIZE:
+            transitions = memory.sample(BATCH_SIZE)
+            batch = Transition(*zip(*transitions))
+            agent.optimize_model(batch, **{'B':BATCH_SIZE})
+            
         if debug:
             print("Episode ", e, " finished; t = ", t)
         
