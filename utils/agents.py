@@ -21,8 +21,6 @@ TARGET_UPDATE = 10
 n_actions = 5
 episode_durations = []
 
-num_episode = 50
-num_iteration = 1000
 batch_size = 32
 learning_rate = 0.01 # Default value for RMSprop
 gamma = 0.99
@@ -53,8 +51,14 @@ class BaseAgent:
 
     def load_model(self, agent_path):
         print('Loading model from {}'.format(agent_path))
-        if actor_path is not None:
-            self.net.load_state_dict(torch.load(agent_path).to(self.device))
+        if agent_path is not None:
+            self.net.load_state_dict(torch.load(agent_path))#.to(self.device)
+    
+    def set_train(self, train):
+        if train:
+            self.net.train()
+        else:
+            self.net.eval()
 
 class DqnAgent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01):
@@ -129,13 +133,17 @@ class DqnAgent(BaseAgent):
         
 # Agent for following consensus protocol
 class LearnerAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False, 
+                 prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if centralized:
-            pass
-        else:
+#         if centralized:
+#             pass
+#         else:
+        if load_path is None:
             self.net = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.needsExpert = True
         self.name = 'LearnerAgent'
@@ -171,13 +179,17 @@ class LearnerAgent(BaseAgent):
 
 # Agent for leaning reward
 class RewardAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01, centralized=False):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01, centralized=False,
+                 prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if centralized:
-            pass
-        else:
+#         if centralized:
+#             pass
+#         else:
+        if load_path is None:
             self.net = RewardNet(N, ns, na, hidden)
+        else:
+            self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.na = na
         self.name = 'RewardAgent'
@@ -220,19 +232,23 @@ class RewardAgent(BaseAgent):
         
 # Agent for leaning action by multiplying it with reward...?
 class RewardActionAgent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], learning_rate=0.01, centralized=False,
+                 prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if centralized:
-            pass
-        else:
+#         if centralized:
+#             pass
+#         else:
+#             self.net = ActionNet(N, ns, na, hidden, action_range)
+        if load_path is None:
             self.net = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.name = 'RewardActionAgent'
         
     # Picks an action based on given state
     def select_action(self, state, **kwargs):
-#         print(self.net(state.view(1,-1,self.N)), self.net(state.view(1,-1,self.N)).shape)
         with torch.no_grad():
             return self.net(state.view(1,-1,self.N)).squeeze().detach().numpy()# # Expected size: (B=1, na)?
     
@@ -245,7 +261,6 @@ class RewardActionAgent(BaseAgent):
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         pred_action = self.net(state_batch.view(B, -1, self.N)) # Shape should be (B,na)??
-#         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape, "; reward shape = ", reward_batch.shape)
 
         # Find loss & optimize the model
         self.net.train()
@@ -254,6 +269,233 @@ class RewardActionAgent(BaseAgent):
         loss.backward()
         self.optimizer.step()
         
+# Actor-Critic attempt #1
+# Properties: Directly estimates action without sampling around. 
+#             Directly updates Reward based on state and action without considering the future.
+#             Is useless.
+class AC1Agent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 prevN=10, load_pathA=None, load_pathC=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        
+        # Load models
+        if load_pathA is None:
+            self.netA = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            
+        if load_pathC is None:
+            self.netC = RewardNet(N, ns, na, hidden)
+        else:
+            self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+        self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
+        self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.na = na
+        self.name = 'AC1Agent'
+        
+    # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
+    # In a future AC you could use RewardAgent's action selection instead.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+
+        # Find loss & optimize the models
+        self.optimizerA.zero_grad()
+        self.optimizerC.zero_grad()
+        self.netA.train() # Actor and action decisions
+        pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+        self.netC.train() # Critic and value predictions
+        pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
+
+        lossA = torch.nn.functional.mse_loss(action_batch, pred_action)
+        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        lossA.backward()
+        lossC.backward()
+        self.optimizerA.step()
+        self.optimizerC.step()
+        
+    # Overwrite original because there are two nets now
+    def set_train(self, train):
+        if train:
+            self.netA.train()
+            self.netC.train()
+        else:
+            self.netA.eval()
+            self.netC.eval()
+
+# Actor-Critic attempt #2
+# Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
+#             Directly updates Reward based on state and action without considering the future.
+class AC2Agent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 prevN=10, load_pathA=None, load_pathC=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        
+        # Load models
+        if load_pathA is None:
+            self.netA = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            
+        if load_pathC is None:
+            self.netC = RewardNet(N, ns, na, hidden)
+        else:
+            self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+        self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
+        self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.na = na
+        self.name = 'AC2Agent'
+        
+    # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
+    # In a future AC you could use RewardAgent's action selection instead.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+
+        # Find loss for Critic
+        self.netC.train() # Critic and value predictions
+        self.optimizerC.zero_grad()
+        pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
+        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        lossC.backward()
+        self.optimizerC.step()
+        
+        # Find loss for Actor
+        self.netA.train() # Actor and action decisions
+        self.optimizerA.zero_grad()
+        pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+        lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+        lossA.backward()
+        self.optimizerA.step()
+        
+    # Overwrite original because there are two nets now
+    def set_train(self, train):
+        if train:
+            self.netA.train()
+            self.netC.train()
+        else:
+            self.netA.eval()
+            self.netC.eval()
+
+# DDPG attempt
+# References: https://github.com/ghliu/pytorch-ddpg/blob/master/ddpg.py, model.py, util.py
+# Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
+#             Updates Reward based on state and action while [NOT considering the future state (with discounts) for now].
+#             Uses two pairs of nets - each pair containing one target network.
+class DDPGAgent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+                 learning_rateA=0.01, learning_rateC=0.02, tau=0.1, centralized=False,
+                 prevN=10, load_pathA=None, load_pathC=None):
+        super().__init__(device, N)
+        self.tau = tau
+        self.centralized = centralized
+        
+        # Load models
+        if load_pathA is None:
+            self.netA = ActionNet(N, ns, na, hidden, action_range)
+            self.netAT = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            self.netAT = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            
+        if load_pathC is None:
+            self.netC = RewardNet(N, ns, na, hidden)
+            self.netCT = RewardNet(N, ns, na, hidden)
+        else:
+            self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+            self.netCT = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+            
+        # Create hard copies from the reference:
+        for target_param, param in zip(self.netAT.parameters(), self.netA.parameters()):
+            target_param.data.copy_(param.data)
+        for target_param, param in zip(self.netCT.parameters(), self.netC.parameters()):
+            target_param.data.copy_(param.data)
+#         self.netAT.eval()
+#         self.netCT.eval() # Not sure if this would stop it from finding loss values
+            
+        self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
+        self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.na = na
+        self.name = 'DDPGAgent'
+        
+    # Picks an action based on given state. Use the non-target Actor for this purpose.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        next_state_batch = torch.cat(batch.next_state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        
+        # Find target network judgements
+        target_next_reward = self.netCT(next_state_batch.view(B, -1, self.N), 
+                                        self.netAT(next_state_batch.view(B, -1, self.N)) )
+        # Add discounts later...
+        target_reward = self.netCT(state_batch.view(B, -1, self.N), 
+                                   self.netAT(state_batch.view(B, -1, self.N)) )
+
+        # Find loss for Critic
+        self.netC.train() # Critic and value predictions
+        self.optimizerC.zero_grad()
+        pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
+        lossC = torch.nn.functional.mse_loss(target_reward.squeeze(), pred_reward.squeeze())
+        lossC.backward()
+        self.optimizerC.step()
+        
+        # Find loss for Actor using non-target Critic
+        torch.autograd.set_detect_anomaly(True)
+        self.netA.train() # Actor and action decisions
+        self.optimizerA.zero_grad()
+        self.optimizerC.zero_grad()
+        state_batch__ = state_batch.view(B, -1, self.N)
+        pred_action = self.netA(state_batch__) # Input shape should be (B,no,N) and output be (B,na)
+        pred_action__ = pred_action.view(B, -1, 1)
+        lossA = -self.netC(state_batch__, pred_action__)
+        lossA__ = lossA.mean()
+        lossA__.backward()
+        self.optimizerA.step() # Do this in a later step to avoid
+        # issues like this: https://github.com/pytorch/pytorch/issues/39141#issuecomment-636881953
+        
+        # Soft update (copied from reference)
+        for target_param, param in zip(self.netAT.parameters(), self.netA.parameters()):
+            target_param.data.copy_( target_param.data * (1.0 - self.tau) + param.data * self.tau )
+        for target_param, param in zip(self.netCT.parameters(), self.netC.parameters()):
+            target_param.data.copy_( target_param.data * (1.0 - self.tau) + param.data * self.tau )
+        
+    # Overwrite original because there are two nets now
+    def set_train(self, train):
+        if train:
+            self.netA.train()
+            self.netC.train()
+        else:
+            self.netA.eval()
+            self.netC.eval()
+
 # Agent for learning a gradient-based method.
 # Let's only consider velocity action outputs for now... 
 class GradientAgent(BaseAgent):
@@ -336,127 +578,3 @@ class GradientAgent(BaseAgent):
         loss.backward()
         self.optimizer.step()
 
-def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
-          BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020):
-    # Batch History
-    state_pool = []
-    action_pool = []
-    reward_pool = []
-    test_hists = []
-    steps = 0
-    if memory is None:
-        memory = ReplayMemory(10000)
-    
-    # Values that would be useful
-    N = env.N
-    # Note that the seed only controls the numpy random, which affects the environment.
-    # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
-    np.random.seed(seed)
-#     torch.manual_seed(seed)
-    test_seeds = np.random.randint(0, 5392644, size=(num_episode // test_interval))
-
-    for e in range(num_episode):
-        steps = 0
-        state = env.reset()
-        state = torch.from_numpy(state).float()
-        state = Variable(state)
-        if debug:
-            env.render()
-
-        for t in range(num_iteration):
-            agent.net.train()     
-            # Try to pick an action, react, and store the resulting behavior in the pool here
-            actions = []
-            for i in range(N):
-                action = agent.select_action(state[i], **{
-                    'steps_done':t, 'num_sample':50, 'action_space':action_space
-                })
-                actions.append(action)
-            action = np.array(actions).T # Shape would become (2,N)
-#             print(action, actions)
-#             action = actions
-#             action = np.array(actions)
-
-            next_state, reward, done, _ = env.step(action)
-            next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
-            action = action.T # Turn shape back to (N,2)
-
-            if agent.needsExpert:
-                # If we need to use expert input during training, then we consult it and get the best action for this state
-                actions = env.controller()
-                action = actions.T # Shape should already be (2,N), so we turn it into (N,2)
-            for i in range(N):
-                memory.push(state[i], action[i], next_state[i], reward[i])
-            state = next_state
-            steps += 1
-
-            if debug:
-                env.render()
-
-            if debug and done:
-                print("Took ", t, " steps to converge")
-                break
-                
-        # Update 1028: Moved this training step outside the loop
-        if len(memory) >= BATCH_SIZE:
-            transitions = memory.sample(BATCH_SIZE)
-            batch = Transition(*zip(*transitions))
-            agent.optimize_model(batch, **{'B':BATCH_SIZE})
-            
-        if debug:
-            print("Episode ", e, " finished; t = ", t)
-        
-        if e % test_interval == 0:
-            print("Test result at episode ", e, ": ")
-            test_hist = test(agent, env, num_test, num_iteration, num_sample, action_space, seed=test_seeds[int(e/test_interval)])
-            test_hists.append(test_hist)
-    return test_hists
-
-def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020):
-    reward_hist_hst = []
-    N=env.N
-    # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
-#     torch.manual_seed(seed)
-    np.random.seed(seed)
-    env_seeds = np.random.randint(0, 31102528, size=num_test)
-    print(env_seeds)
-    
-    for e in range(num_test):
-        steps = 0
-        agent.net.eval()
-        cum_reward = 0
-        reward_hist = []
-
-        np.random.seed(env_seeds[e])
-        state = env.reset()
-        state = torch.from_numpy(state).float()
-        state = Variable(state)
-        env.render()
-
-        for t in range(num_iteration):  
-            # Try to pick an action, react, and store the resulting behavior in the pool here
-            actions = []
-            for i in range(N):
-                action = agent.select_action(state[i], **{
-                    'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
-                })
-                actions.append(action)
-            action = np.array(actions).T 
-
-            next_state, reward, done, _ = env.step(action)
-            next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
-            state = next_state
-            cum_reward += sum(reward)
-            reward_hist.append(reward)
-
-            if e % 10 == 0:
-                env.render()
-            steps += 1
-
-            if done:
-#                 print("Took ", t, " steps to converge")
-                break
-        print("Finished test ", e, " with ", t, #" steps, and rewards = ", reward, 
-              "; cumulative reward = ", cum_reward)
-        reward_hist_hst.append(reward_hist)
-    return reward_hist_hst
