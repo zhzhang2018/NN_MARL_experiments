@@ -18,6 +18,7 @@ UPDATE_PER_ITERATION = 0
 UPDATE_PER_EPISODE = 1
 FUTURE_REWARD_YES = 0
 FUTURE_REWARD_NO = 1
+FUTURE_REWARD_YES_NORMALIZE = 2
 
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
@@ -34,7 +35,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
     # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
     np.random.seed(seed)
 #     torch.manual_seed(seed)
-    test_seeds = np.random.randint(0, 5392644, size=(num_episode // test_interval)+1)
+    test_seeds = np.random.randint(0, 5392644, size=int(num_episode // test_interval)+1)
 
     for e in range(num_episode):
         steps = 0
@@ -50,7 +51,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
         next_state_pool = []
 
         for t in range(num_iteration):
-            # agent.net.train()
+#             agent.net.train()
             agent.set_train(True)
             # Try to pick an action, react, and store the resulting behavior in the pool here
             actions = []
@@ -83,7 +84,17 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 action_pool.append(action)
                 reward_pool.append(reward)
                 next_state_pool.append(next_state)
-            
+
+            # Update 1028: Moved this training step outside the loop
+            if len(memory) >= BATCH_SIZE:
+                transitions = memory.sample(BATCH_SIZE)
+                batch = Transition(*zip(*transitions))
+                agent.optimize_model(batch, **{'B':BATCH_SIZE})
+            elif len(memory) > 0:
+                transitions = memory.sample(len(memory))
+                batch = Transition(*zip(*transitions))
+                agent.optimize_model(batch, **{'B':len(memory)})
+
             state = next_state
             steps += 1
 
@@ -101,13 +112,17 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 for i in range(N):
                     memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
                                 next_state_pool[-j-1][i], reward_pool[-j-1][i])
-                
-        # Update 1028: Moved this training step outside the loop
-        if len(memory) >= BATCH_SIZE:
-            transitions = memory.sample(BATCH_SIZE)
-            batch = Transition(*zip(*transitions))
-            agent.optimize_model(batch, **{'B':BATCH_SIZE})
-            
+        elif reward_mode == FUTURE_REWARD_YES_NORMALIZE:
+            for j in range(len(reward)):
+                if j > 0:
+                    reward_pool[-j-1] += gamma * reward_pool[-j]
+            reward_pool = torch.tensor(reward_pool)
+            reward_pool = (reward_pool - reward_pool.mean()) / reward_pool.std()
+            for j in range(len(reward)):
+                for i in range(N):
+                    memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
+                                next_state_pool[-j-1][i], reward_pool[-j-1][i])
+
         if debug:
             print("Episode ", e, " finished; t = ", t)
         

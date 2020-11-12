@@ -42,14 +42,20 @@ class RewardNet(nn.Module):
         super(RewardNet, self).__init__()
         self.N = N # Number of agents
 
-        self.flt1 = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
-        self.flt2 = nn.Flatten()
-        self.fc1 = nn.Linear(ns*self.N + na, hidden) # Take in flattened input
-        self.fc2 = nn.Linear(hidden, hidden)
-        self.fc3 = nn.Linear(hidden, 1)  # For DQN, we have to output a value or a probabilty of some sorts for each action
-        
-        self.FTlayers = [self.flt1,self.flt2]
-        self.RNlayers = [self.fc1,self.fc2,self.fc3]
+#         self.flt1 = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
+#         self.flt2 = nn.Flatten()
+#         self.fc1 = nn.Linear(ns*self.N + na, hidden) # Take in flattened input
+#         self.fc2 = nn.Linear(hidden, hidden)
+#         self.fc3 = nn.Linear(hidden, 1)  # For DQN, we have to output a value or a probabilty of some sorts for each action
+
+#         self.FTlayers = nn.ModuleList([self.flt1,self.flt2])
+#         self.RNlayers = nn.ModuleList([self.fc1,self.fc2,self.fc3])
+        self.FTlayers = nn.ModuleList([nn.Flatten(), nn.Flatten()])
+        self.RNlayers = nn.ModuleList([
+            nn.Linear(ns*self.N + na, hidden),
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, 1)
+        ])
 
     def forward(self, x, y):
 #         # print(self.flt(x)) # Won't work!?!?
@@ -70,10 +76,34 @@ class RewardNet(nn.Module):
         x = self.FTlayers[0](x)
         y = self.FTlayers[1](y)
         x = torch.cat( (x, y), dim=1 ).squeeze()
-        for fc in self.RNlayers[:-1]:
-            x = torch.relu(fc(x))
+        for i in range(len(self.RNlayers)-1):
+            x = torch.relu(self.RNlayers[i](x))
+#         for fc in self.RNlayers[:-1]:
+#             x = torch.relu(fc(x))
         x = self.RNlayers[-1](x)
-        x = torch.sigmoid(x) # Range = [0,1]
+        # x = torch.sigmoid(x) # Range = [0,1]
+        return x
+
+# Implements a net that tries to predict the reward for state alone
+class RewardStateNet(nn.Module):
+    def __init__(self, N, ns=2, hidden=24):
+        super(RewardNet, self).__init__()
+        self.N = N # Number of agents
+
+        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.RNlayers = nn.ModuleList([
+            nn.Linear(ns*self.N, hidden),
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, 1)
+        ])
+
+    def forward(self, x, y):
+        for flt in self.FTlayers:
+            x = flt(x)
+        for i in range(len(self.RNlayers)-1):
+            x = torch.relu(self.RNlayers[i](x))
+        x = self.RNlayers[-1](x)
+#         x = torch.sigmoid(x) # Range = [0,1] for normalized state values
         return x
 
 # Implements a net that tries to predict an action (with a given range, perhaps)
@@ -84,13 +114,23 @@ class ActionNet(nn.Module):
         self.range = action_range[1] - action_range[0]
         self.offset = 0.5*(action_range[0]+action_range[1])
 
-        self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
-        self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
-        self.fc2 = nn.Linear(hidden, hidden)
-        self.fc3 = nn.Linear(hidden, na)
+#         self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
+#         self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
+#         self.fc2 = nn.Linear(hidden, hidden)
+#         self.fc3 = nn.Linear(hidden, na)
         
-        self.FTlayers = [self.flt]
-        self.ANlayers = [self.fc1,self.fc2,self.fc3]
+#         self.FTlayers = [self.flt]
+#         self.ANlayers = [self.fc1,self.fc2,self.fc3]
+        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.ANlayers = nn.ModuleList([
+            nn.Linear(ns*self.N, hidden),
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, na)
+        ])
+        
+        # Initialization? 
+#         for fc in self.ANlayers:
+#             torch.nn.init.kaiming_uniform_(fc.weight,nonlinearity='relu')
 
     def forward(self, x):
         ### Updated 11/04
@@ -103,7 +143,43 @@ class ActionNet(nn.Module):
             x = flt(x)
         for fc in self.ANlayers:
             x = torch.tanh(fc(x))
+#             x = torch.relu(fc(x)) # Could it solve the gradient problem?
         return x * self.range * 0.5 + self.offset
+
+
+# Implements a net where actor and critic shares the first layer.
+# Here, the critic network doesn't depend on action no more. 
+class ActorCriticNet(nn.Module):
+    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1]):
+        super(ActionNet, self).__init__()
+        self.N = N # Number of agents
+        self.range = action_range[1] - action_range[0]
+        self.offset = 0.5*(action_range[0]+action_range[1])
+
+        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.shared_layers = nn.ModuleList([nn.Linear(ns*self.N, hidden)])
+        self.ANlayers = nn.ModuleList([
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, na)
+        ])
+        self.RNlayers = nn.ModuleList([
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, 1)
+        ])
+        
+    def forward(self, x):
+        for flt in self.FTlayers:
+            x = flt(x)
+        for sh in self.shared_layers:
+            x = sh(x)
+        x_a = x
+        x_c = x
+        for fc in self.ANlayers:
+            x_a = torch.relu(fc(x_a))
+        for fc in self.RNlayers:
+            x_c = torch.relu(fc(x_c))
+        return (x_a * self.range * 0.5 + self.offset), x_c
+
 
 # Implements a net that tries to predict an energy function.
 # Input: (B, N, ns) or (B, ns, N)
@@ -149,9 +225,12 @@ class ActionNetTF(ActionNet):
             fc.bias.requires_grad = False
         
         # Create additional layers to suit the size difference
-        self.tf1 = nn.Linear(ns*N, tf_hidden)
-        self.tf2 = nn.Linear(tf_hidden, ns*prevN)
-        self.ANlayers = [self.tf1, self.tf2] + self.ANlayers
+        # self.tf1 = nn.Linear(ns*N, tf_hidden)
+        # self.tf2 = nn.Linear(tf_hidden, ns*prevN)
+        # self.ANlayers = [self.tf1, self.tf2] + self.ANlayers
+        # Here's hoping that this would train...
+        self.ANlayers.insert(0,nn.Linear(ns*N, tf_hidden))
+        self.ANlayers.insert(1,nn.Linear(tf_hidden, ns*prevN))
         
         
 class RewardNetTF(RewardNet):
@@ -169,6 +248,8 @@ class RewardNetTF(RewardNet):
             fc.bias.requires_grad = False
         
         # Create additional layers to suit the size difference
-        self.tf1 = nn.Linear(ns*N+na, tf_hidden)
-        self.tf2 = nn.Linear(tf_hidden, ns*prevN + na)
-        self.RNlayers = [self.tf1, self.tf2] + self.RNlayers
+        # self.tf1 = nn.Linear(ns*N+na, tf_hidden)
+        # self.tf2 = nn.Linear(tf_hidden, ns*prevN + na)
+        # self.RNlayers = [self.tf1, self.tf2] + self.RNlayers
+        self.RNlayers.insert(0,nn.Linear(ns*N+na, tf_hidden))
+        self.RNlayers.insert(1,nn.Linear(tf_hidden, ns*prevN + na))

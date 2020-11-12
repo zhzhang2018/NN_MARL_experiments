@@ -168,8 +168,13 @@ class LearnerAgent(BaseAgent):
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
         self.optimizer.zero_grad()
-        loss = torch.nn.functional.mse_loss(action_batch, pred_action)
+#         loss = torch.nn.functional.mse_loss(action_batch, pred_action)
+        print(loss)
         loss.backward()
+#         print("4th Last layer gradients after backward: ", torch.mean(self.net.ANlayers[3].weight.grad))
+#         print("3rd Last layer gradients after backward: ", torch.mean(self.net.ANlayers[2].weight.grad))
+#         print("2nd Last layer gradients after backward: ", torch.mean(self.net.ANlayers[1].weight.grad))
+#         print("Last     layer gradients after backward: ", torch.mean(self.net.ANlayers[0].weight.grad))
         self.optimizer.step()
         
         # Check sizes - attach real size after those lines.
@@ -227,7 +232,20 @@ class RewardAgent(BaseAgent):
 
         self.optimizer.zero_grad()
         loss = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+#         print(loss)
+#         print("First layer gradients before backward: ", self.net.RNlayers[-1].weight.grad)
+#         print("Last layer gradients before backward: ", self.net.RNlayers[0].weight.grad)
         loss.backward()
+#         print("First    layer gradients after backward: ", torch.mean(self.net.RNlayers[-1].weight.grad))
+#         print(self.net.RNlayers[-1].weight.grad)
+#         print("6th Last layer gradients after backward: ", torch.mean(self.net.RNlayers[5].weight.grad))
+#         print("5th Last layer gradients after backward: ", torch.mean(self.net.RNlayers[4].weight.grad))
+#         print("4th Last layer gradients after backward: ", torch.mean(self.net.RNlayers[3].weight.grad))
+#         print("3rd Last layer gradients after backward: ", torch.mean(self.net.RNlayers[2].weight.grad))
+#         print("2nd Last layer gradients after backward: ", torch.mean(self.net.RNlayers[1].weight.grad))
+#         print("Last     layer gradients after backward: ", torch.mean(self.net.RNlayers[0].weight.grad))
+#         print(self.net.RNlayers[0].weight.grad)
+        # print("Should be the same as: ", self.net.fc1.weight.grad)
         self.optimizer.step()
         
 # Agent for leaning action by multiplying it with reward...?
@@ -377,16 +395,45 @@ class AC2Agent(BaseAgent):
         self.optimizerC.zero_grad()
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
         lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+#         print("Critic loss: ", lossC)
         lossC.backward()
+#         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+#         print(self.netC.RNlayers[0].weight.grad)
         self.optimizerC.step()
         
         # Find loss for Actor
         self.netA.train() # Actor and action decisions
         self.optimizerA.zero_grad()
+        
+        # Freeze Critic?
+        for nfc in self.netC.RNlayers:
+            nfc.weight.requires_grad = False
+            nfc.bias.requires_grad = False
+        # Eval critic? 
+        self.netC.eval()
+
         pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+#         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
+        print("Actor loss = reward: ", lossA)
+#         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
         lossA.backward()
+        print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+        print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+        print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
+#         print(self.netC.RNlayers[0].weight.grad)
+        print("Last  layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[0].weight.grad))
+        print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
+        print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
+#         print(self.netA.ANlayers[0].weight.grad)
         self.optimizerA.step()
+    
+        # UnFreeze Critic?
+        for nfc in self.netC.RNlayers:
+            nfc.weight.requires_grad = True
+            nfc.bias.requires_grad = True
+        # UnEval critic? 
+        self.netC.train()
         
     # Overwrite original because there are two nets now
     def set_train(self, train):
@@ -396,12 +443,216 @@ class AC2Agent(BaseAgent):
         else:
             self.netA.eval()
             self.netC.eval()
+    
+    def save_model(self, suffix="", agent_path=None):
+        if not os.path.exists('models/'):
+            os.makedirs('models/')
 
+        if len(suffix) <= 0:
+            suffix = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        if agent_path is None:
+            agent_path = "models/{}_{}".format(self.name, suffix)
+        print('Saving model to {}'.format(agent_path))
+        torch.save(self.netA.state_dict(), agent_path+'_A')
+        torch.save(self.netC.state_dict(), agent_path+'_C')
+
+    def load_model(self, agent_path):
+        print('Loading model from {}'.format(agent_path))
+        if agent_path is not None:
+            self.netA.load_state_dict(torch.load(agent_path+'_A'))
+            self.netC.load_state_dict(torch.load(agent_path+'_C'))
+
+# Actor-Critic attempt #3
+# Properties: Chooses action using negative advantage. 
+#             Updates Reward based on state and action assuming values incorporate the future.
+# To do this change, we have to use online training instead to provide immediate reward per action. 
+# Alternatively, use the next state? to estimate the value???
+#    - Another problem with this: The Critic also needs action to output a value. Should I change the network??
+# https://github.com/nikhilbarhate99/Actor-Critic-PyTorch/blob/01c833e83006be5762151a29f0719cc9c03c204d/model.py#L33
+# http://rail.eecs.berkeley.edu/deeprlcourse-fa17/f17docs/lecture_5_actor_critic_pdf.pdf
+class AC3Agent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 prevN=10, load_pathA=None, load_pathC=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        
+        # Load models
+        if load_pathA is None:
+            self.netA = ActionNet(N, ns, na, hidden, action_range)
+        else:
+            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            
+        if load_pathC is None:
+            self.netC = RewardNet(N, ns, na, hidden)
+        else:
+            self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+        self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
+        self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.na = na
+        self.name = 'AC3Agent'
+        
+    # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
+    # In a future AC you could use RewardAgent's action selection instead.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        next_state_batch = torch.cat(batch.next_state)
+
+        # Find loss for Critic
+        self.netC.train() # Critic and value predictions
+        self.optimizerC.zero_grad()
+        pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
+        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+#         print("Critic loss: ", lossC)
+        lossC.backward()
+#         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+#         print(self.netC.RNlayers[0].weight.grad)
+        self.optimizerC.step()
+        
+        # Find loss for Actor
+        self.netA.train() # Actor and action decisions
+        self.optimizerA.zero_grad()
+        
+        # Freeze Critic?
+#         for nfc in self.netC.RNlayers:
+#             nfc.weight.requires_grad = False
+#             nfc.bias.requires_grad = False
+        # Eval critic? 
+        self.netC.eval()
+
+        pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+#         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+        lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
+#         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
+#         print("Actor loss = reward: ", lossA)
+#         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
+        lossA.backward()
+#         print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+#         print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+#         print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
+#         print(self.netC.RNlayers[0].weight.grad)
+#         print("Last  layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[0].weight.grad))
+#         print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
+#         print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
+#         print(self.netA.ANlayers[0].weight.grad)
+        self.optimizerA.step()
+    
+        # UnFreeze Critic?
+#         for nfc in self.netC.RNlayers:
+#             nfc.weight.requires_grad = True
+#             nfc.bias.requires_grad = True
+        # UnEval critic? 
+        self.netC.train()
+        
+    # Overwrite original because there are two nets now
+    def set_train(self, train):
+        if train:
+            self.netA.train()
+            self.netC.train()
+        else:
+            self.netA.eval()
+            self.netC.eval()
+    
+    def save_model(self, suffix="", agent_path=None):
+        if not os.path.exists('models/'):
+            os.makedirs('models/')
+
+        if len(suffix) <= 0:
+            suffix = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        if agent_path is None:
+            agent_path = "models/{}_{}".format(self.name, suffix)
+        print('Saving model to {}'.format(agent_path))
+        torch.save(self.netA.state_dict(), agent_path+'_A')
+        torch.save(self.netC.state_dict(), agent_path+'_C')
+
+    def load_model(self, agent_path):
+        print('Loading model from {}'.format(agent_path))
+        if agent_path is not None:
+            self.netA.load_state_dict(torch.load(agent_path+'_A'))
+            self.netC.load_state_dict(torch.load(agent_path+'_C'))
+
+# Actor-Critic attempt #4, never finished due to:     
+# A) If Actor and Critic don’t share layers, then the gradient that trickles back from Critic’s value prediction to Actor’s first layer would be so small that learning is unobservable. 
+# B) If Actor and Critic share layers, then Critic can no longer take in an action, and I can’t find a way to incorporate the Actor output in loss calculation when we use deterministic policy (remember that we can’t use stochastic ones, because action space is continuous).  
+# C) One possible way out is to still allow Critic to take action value as input. The necessary modification is now to send both state and action to the first layer; when using Actor, the action input can be set to 0; when using Critic, both are used; during training, we train by updating Critic first, and then clear all gradients and stuff, and then update the Actor; when evaluating the Actor’s action, we would need to pass it into the input, along with the next state from the batch, so that the first shared layer can get some gradient... sounds nasty. Not doing that.  
+# Properties: Chooses action using negative advantage. 
+#             Updates Reward based on state and action assuming values incorporate the future.
+#             Actor and Critic share one layer.
+# To do this change, we have to use online training instead to provide immediate reward per action. 
+# Alternatively, use the next state? to estimate the value???
+# Also, how is the action value supposed to be incorporated into the loss??
+class AC4Agent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+                 learning_rate=0.01, centralized=False,
+                 prevN=10, load_path=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        
+        # Load models
+        if load_path is None:
+            self.net = ActorCriticNet(N, ns, na, hidden, action_range)
+        else:
+            self.net = ActorCriticNet(N, prevN, load_pathA, ns, na, hidden, action_range)
+        
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate) # Or separate them?
+        self.na = na
+        self.name = 'AC4Agent'
+        
+    # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
+    # In a future AC you could use RewardAgent's action selection instead.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.net(state.view(1,-1,self.N))[0].squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        next_state_batch = torch.cat(batch.next_state)
+
+        self.net.train() 
+        self.optimizer.zero_grad()
+        # Find loss for Critic and Actor
+        pred_action, pred_reward = self.net( state_batch.view(B, -1, self.N) )
+        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        # Update C first? And then do zero_grad again? 
+#         lossA = ( self.netC(next_state_batch.view(B, -1, self.N)) - reward_batch ).sum()
+        lossA = ( self.netC(next_state_batch.view(B, -1, self.N)) - reward_batch ).sum()
+        
+        # Find loss for Actor
+        # Freeze Critic?
+        # for nfc in self.net.RNlayers:
+        #     nfc.weight.requires_grad = False
+        #     nfc.bias.requires_grad = False
+
+#         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+        lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
+        lossA.backward()
+        self.optimizerA.step()
+        # UnFreeze Critic?
+        # for nfc in self.net.RNlayers:
+        #     nfc.weight.requires_grad = False
+        #     nfc.bias.requires_grad = False
+        
+            
 # DDPG attempt
 # References: https://github.com/ghliu/pytorch-ddpg/blob/master/ddpg.py, model.py, util.py
 # Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
 #             Updates Reward based on state and action while [NOT considering the future state (with discounts) for now].
 #             Uses two pairs of nets - each pair containing one target network.
+# Should this be trained without using rewards that are already cumulative in the future?
 class DDPGAgent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
                  learning_rateA=0.01, learning_rateC=0.02, tau=0.1, centralized=False,
@@ -478,6 +729,16 @@ class DDPGAgent(BaseAgent):
         lossA = -self.netC(state_batch__, pred_action__)
         lossA__ = lossA.mean()
         lossA__.backward()
+#         print("Actor loss = reward: ", lossA__)
+#         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
+        print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+        print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+        print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
+#         print(self.netC.RNlayers[0].weight.grad)
+        print("Last  layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[0].weight.grad))
+        print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
+        print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
+#         print(self.netA.ANlayers[0].weight.grad)
         self.optimizerA.step() # Do this in a later step to avoid
         # issues like this: https://github.com/pytorch/pytorch/issues/39141#issuecomment-636881953
         
