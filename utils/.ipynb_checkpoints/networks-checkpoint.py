@@ -76,6 +76,7 @@ class RewardNet(nn.Module):
         x = self.FTlayers[0](x)
         y = self.FTlayers[1](y)
         x = torch.cat( (x, y), dim=1 ).squeeze()
+#         print(x.shape, y.shape)
         for i in range(len(self.RNlayers)-1):
             x = torch.relu(self.RNlayers[i](x))
 #         for fc in self.RNlayers[:-1]:
@@ -228,9 +229,15 @@ class ActionNetTF(ActionNet):
         # self.tf1 = nn.Linear(ns*N, tf_hidden)
         # self.tf2 = nn.Linear(tf_hidden, ns*prevN)
         # self.ANlayers = [self.tf1, self.tf2] + self.ANlayers
+        
         # Here's hoping that this would train...
         self.ANlayers.insert(0,nn.Linear(ns*N, tf_hidden))
         self.ANlayers.insert(1,nn.Linear(tf_hidden, ns*prevN))
+        
+#         self.ANlayers.insert(0,nn.Linear(tf_hidden, ns*prevN))
+#         self.ANlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
+#         self.ANlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
+#         self.ANlayers.insert(0,nn.Linear(ns*N, tf_hidden))
         
         
 class RewardNetTF(RewardNet):
@@ -251,5 +258,98 @@ class RewardNetTF(RewardNet):
         # self.tf1 = nn.Linear(ns*N+na, tf_hidden)
         # self.tf2 = nn.Linear(tf_hidden, ns*prevN + na)
         # self.RNlayers = [self.tf1, self.tf2] + self.RNlayers
+        
         self.RNlayers.insert(0,nn.Linear(ns*N+na, tf_hidden))
         self.RNlayers.insert(1,nn.Linear(tf_hidden, ns*prevN + na))
+        
+#         self.RNlayers.insert(0,nn.Linear(tf_hidden, ns*prevN + na))
+#         self.RNlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
+#         self.RNlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
+#         self.RNlayers.insert(0,nn.Linear(ns*N+na, tf_hidden))
+
+# Implement a CNN to learn reward mapping directly
+class RewardCNN(nn.Module):
+    def __init__(self, N, ns=2, na=2, hidden=4, n_hid=2, in_features=1):
+        super().__init__()
+        self.N = N # Number of agents
+        self.hidden = hidden # Number of channels for intermediate layers
+        self.na = na
+        # Starting input shape is (B, 1, F, N), where F=ns+na: We attach a (na,N) layer below to include current action... would this even work?
+
+        layerlist = []
+        layerlist.append(nn.Conv2d(
+                in_channels=in_features, out_channels=hidden, kernel_size=(1, 1), stride=(1, 1)
+            )) # (B, 1, F, N) --> (B, H, F, N)
+        for i in range(n_hid):
+            if i == 0:
+                # Aggregate neighbor readings in the first layer? 
+                layerlist.append(nn.Conv2d(
+                    in_channels=hidden, out_channels=hidden, kernel_size=(1, 1), stride=(1, N)
+                )) # (B, H, F, N) --> (B, H, F, 1)
+            else:
+                layerlist.append(nn.Conv2d(
+                    in_channels=hidden, out_channels=hidden, kernel_size=(1, 1), stride=(1, 1)
+                )) # (B, H, F, N/1) --> (B, H, F, N/1)
+        # Aggregate the features and gather all the channels
+        layerlist.append(nn.Conv2d(
+                in_channels=hidden, out_channels=1, kernel_size=(ns+na, 1), stride=(1, 1)
+            )) # (B, H, F, N) --> (B, 1, 1, 1)
+        
+        self.RCNNlayers = nn.ModuleList(layerlist) 
+
+    def forward(self, x,y):
+        # Assumption: y started off as an action (B,na,???), and we need it to become (B,1,na,N)
+        y = y.view((-1,1,self.na,1))
+#         print(x.shape, y.shape)
+        y = y.repeat(1,1,1,self.N)
+        x = torch.unsqueeze(x, dim=1) # (B, ns, N) --> (B, 1, ns, N)
+#         print(x.shape, y.shape)
+        x = torch.cat( (x, y), dim=2 )
+        for i in range(len(self.RCNNlayers)-1):
+            x = torch.relu(self.RCNNlayers[i](x))
+        x = self.RCNNlayers[-1](x)
+        # x = torch.sigmoid(x) # Range = [0,1]
+        x = torch.squeeze(x)
+        return x
+
+# Implement a CNN to learn action mapping directly
+class ActionCNN(nn.Module):
+    def __init__(self, N, ns=2, na=2, hidden=4, n_hid=2, in_features=1, action_range=[-1,1]):
+        super().__init__()
+        self.N = N # Number of agents
+        self.hidden = hidden # Number of channels for intermediate layers
+        self.na = na
+        self.range = action_range[1] - action_range[0]
+        self.offset = 0.5*(action_range[0]+action_range[1])
+
+        layerlist = []
+        layerlist.append(nn.Conv2d(
+                in_channels=in_features, out_channels=hidden, kernel_size=(1, 1), stride=(1, 1)
+            )) # (B, 1, F, N) --> (B, H, F, N)
+        for i in range(n_hid):
+            if i == 0:
+                # Aggregate neighbor readings in the first layer? 
+                layerlist.append(nn.Conv2d(
+                    in_channels=hidden, out_channels=hidden, kernel_size=(1, 1), stride=(1, N)
+                )) # (B, H, F, N) --> (B, H, F, 1)
+            else:
+                layerlist.append(nn.Conv2d(
+                    in_channels=hidden, out_channels=hidden, kernel_size=(1, 1), stride=(1, 1)
+                )) # (B, H, F, N/1) --> (B, H, F, N/1)
+        # Aggregate the features and gather all the channels
+        layerlist.append(nn.Conv2d(
+                in_channels=hidden, out_channels=na, kernel_size=(ns, 1), stride=(1, 1)
+            )) # (B, H, F, N) --> (B, na, 1, 1)
+        
+        self.ACNNlayers = nn.ModuleList(layerlist) 
+
+    def forward(self, x):
+        x = torch.unsqueeze(x, dim=1) # (B, F, N) --> (B, 1, F, N)
+#         print(x.shape)
+        for i in range(len(self.ACNNlayers)):
+            x = torch.tanh(self.ACNNlayers[i](x))
+#             print(x.shape)
+#         x = self.ACNNlayers[-1](x)
+        # x = torch.sigmoid(x) # Range = [0,1]
+        x = x.view((-1, self.na)) # --> (B, na)
+        return x * self.range * 0.5 + self.offset

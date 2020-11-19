@@ -168,8 +168,8 @@ class LearnerAgent(BaseAgent):
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
         self.optimizer.zero_grad()
-#         loss = torch.nn.functional.mse_loss(action_batch, pred_action)
-        print(loss)
+        loss = torch.nn.functional.mse_loss(action_batch, pred_action)
+#         print(loss)
         loss.backward()
 #         print("4th Last layer gradients after backward: ", torch.mean(self.net.ANlayers[3].weight.grad))
 #         print("3rd Last layer gradients after backward: ", torch.mean(self.net.ANlayers[2].weight.grad))
@@ -181,7 +181,47 @@ class LearnerAgent(BaseAgent):
 #         print(state_batch.shape)
 #         print(action_batch.shape, pred_action.shape)
 #         print(reward_batch.shape)
+class LearnerCNNAgent(BaseAgent):
+    def __init__(self, device, N, ns=4, na=2, hidden=24, n_hid=2, in_features=1, action_range=[-1,1], learning_rate=0.01, centralized=False, 
+                 prevN=10, load_path=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        if load_path is None:
+            self.net = ActionCNN(N, ns, na, hidden, n_hid, in_features, action_range)
+        else:
+            self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.needsExpert = True
+        self.name = 'LearnerCNNAgent'
+        
+    # Picks an action based on given state
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            return self.net(state.view(1,-1,self.N)).squeeze().detach().numpy()# # Expected size: (B=1, ns, N) -> (B=1, na, N) -> (na,N)?
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
+        # Find loss & optimize the model
+        self.net.train() 
+        pred_action = self.net(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+#         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
+
+        self.optimizer.zero_grad()
+        loss = torch.nn.functional.mse_loss(action_batch, pred_action)
+        print("ACNN loss: ", loss)
+        loss.backward()
+        print("4th Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[3].weight.grad))
+        print("3rd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[2].weight.grad))
+        print("2nd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[1].weight.grad))
+        print("The Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[0].weight.grad))
+        self.optimizer.step()
+    
 # Agent for leaning reward
 class RewardAgent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, learning_rate=0.01, centralized=False,
@@ -208,6 +248,8 @@ class RewardAgent(BaseAgent):
             actions = torch.from_numpy( 
                     np.random.rand(num_sample, self.na).astype('float32')
                 ) * (action_space[1]-action_space[0])+action_space[0]
+#             print(state.shape, actions.shape)
+#             print(state)
             rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
 #             print(rewards.shape, rewards.max(0))
             bestind = rewards.max(0)[1]
@@ -246,6 +288,62 @@ class RewardAgent(BaseAgent):
 #         print("Last     layer gradients after backward: ", torch.mean(self.net.RNlayers[0].weight.grad))
 #         print(self.net.RNlayers[0].weight.grad)
         # print("Should be the same as: ", self.net.fc1.weight.grad)
+        self.optimizer.step()
+        
+# Agent for leaning reward
+class RewardCNNAgent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, n_hid=2, in_features=1, learning_rate=0.01, centralized=False,
+                 prevN=10, load_path=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        if load_path is None:
+            self.net = RewardCNN(N, ns, na, hidden, n_hid, in_features)
+        else:
+            self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.na = na
+        self.name = 'RewardCNNAgent'
+    
+    # Idk how to implement this... randomly sample a bunch of possible actions and then pick the best one?
+    def select_action(self, state, **kwargs):
+        num_sample = kwargs.get('num_sample', 50)
+        action_space = kwargs.get('action_space', [-1,1])
+        with torch.no_grad():
+            actions = torch.from_numpy( 
+                    np.random.rand(num_sample, self.na).astype('float32')
+                ) * (action_space[1]-action_space[0])+action_space[0]
+            rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
+            bestind = rewards.max(0)[1]
+#             print(bestind, actions)
+            return actions[bestind.detach()].numpy()#detach()
+    
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch[0]))
+#         print(B, len(batch[0]), len(batch), len(batch.action))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+
+        # Find loss & optimize the model
+        self.net.train()
+#         print("State batch shape = ", state_batch.view(B, -1, self.N).shape, "; action shape = ", action_batch.view(B, -1, 1).shape)
+        pred_reward = self.net(
+            state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1)
+        ) # Shape is (B,ns,N) and (B,na) for input and (B, ) for output
+#         print("Reward batch shape = ", reward_batch.shape, "; prediction shape = ", pred_reward.shape)
+
+        self.optimizer.zero_grad()
+        loss = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        print("RCNN loss: ", loss)
+#         print("First layer gradients before backward: ", self.net.RNlayers[-1].weight.grad)
+#         print("Last layer gradients before backward: ", self.net.RNlayers[0].weight.grad)
+        loss.backward()
+#         print("First    layer gradients after backward: ", torch.mean(self.net.RNlayers[-1].weight.grad))
+        print("4th Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[3].weight.grad))
+        print("3rd Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[2].weight.grad))
+        print("2nd Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[1].weight.grad))
+        print("The Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[0].weight.grad))
         self.optimizer.step()
         
 # Agent for leaning action by multiplying it with reward...?
@@ -395,15 +493,19 @@ class AC2Agent(BaseAgent):
         self.optimizerC.zero_grad()
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
         lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
-#         print("Critic loss: ", lossC)
+        print("Critic loss: ", lossC)
         lossC.backward()
 #         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
 #         print(self.netC.RNlayers[0].weight.grad)
+        print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+        print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+        print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
         self.optimizerC.step()
         
         # Find loss for Actor
         self.netA.train() # Actor and action decisions
         self.optimizerA.zero_grad()
+        self.optimizerC.zero_grad()
         
         # Freeze Critic?
         for nfc in self.netC.RNlayers:

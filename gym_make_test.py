@@ -17,7 +17,9 @@ O_VELOCITY = 1
 O_ACCELERATION = 2
 env = gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N, dt=0.1, Delta=0.05,
               input_type=U_ACCELERATION, observe_type=O_VELOCITY).unwrapped
-
+# env = gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N, dt=0.1, Delta=0.05,
+#               input_type=U_VELOCITY, observe_type=O_VELOCITY).unwrapped
+env.reset()
 for i in range(15):
 	act = env.controller()
 	# print(act)
@@ -26,7 +28,7 @@ for i in range(15):
 	env.render()
 	time.sleep(0.5)
 # Test driving in diverge
-for i in range(20):
+for i in range(25):
 	act = env.controller()
 	# print(act)
 	next_state, reward, done, _ = env.step(-act)

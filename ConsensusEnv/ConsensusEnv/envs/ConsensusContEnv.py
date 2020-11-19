@@ -11,6 +11,8 @@ U_VELOCITY = 1
 U_ACCELERATION = 2
 O_VELOCITY = 1
 O_ACCELERATION = 2
+O_ACTION = 1
+O_NO_ACTION = 0
 # If you want nonlinear featuers, you should be responsible for passing them in during calling.
 # Not implemented for now, though.
 
@@ -19,7 +21,7 @@ class ConsensusContEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4,
-                 input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[]):
+                 input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
@@ -31,7 +33,10 @@ class ConsensusContEnv(gym.Env):
         # The layout is going to be: x, y, dx, dy (,d2x, d2y) where the parenthesis one depnds on input_type
         self.no = self.nd * (observe_type+1)
         # And we can attach custom-designed features after it
-        self.nf = self.no + len(additional_features)
+        self.nf = self.no + len(additional_features) + self.na # self.na for observing neighbr actions
+        self.observe_action = observe_action
+        # if self.observe_action == O_ACTION:
+        #     self.no = self.nf
 
         self.input_type = input_type
         self.observe_type = observe_type
@@ -74,7 +79,7 @@ class ConsensusContEnv(gym.Env):
         self.state[4:,:] *= 0
 
         # Default adjacency matrix
-        self.Adj = np.ones((self.N, self.N))
+        self.Adj = np.ones((self.N, self.N)) - np.eye(self.N)
         np.fill_diagonal(self.Adj,0)
 
         # Initialize renderer
@@ -85,9 +90,10 @@ class ConsensusContEnv(gym.Env):
 
         # Checks if the agents have cuddled together long enough
         self.done_count = 0
-        self.done_thres = 5
+        self.done_thres = 3#5
         self.done_v_lim = 0.02*self.v_max
         self.done_a_lim = 0.02*self.a_max
+        self.step_count = 0
     
     # This is probably not needed for continuous action space.
     def translate_action_to_v(self, action):
@@ -150,7 +156,7 @@ class ConsensusContEnv(gym.Env):
         
         # Find reward via summed total distance for each agent. 
         oob_reward = 10 # Deduct this value for out-of-bound agents
-        rewards = (out_of_bound - 1) * oob_reward 
+        rewards = (out_of_bound - 1) * oob_reward # shape = (N,)
         done = True
 
         # self.state is a NSxN array containing locations.
@@ -193,32 +199,66 @@ class ConsensusContEnv(gym.Env):
         diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
         diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
 
+        # Then we want a reward as a list.
+        # If we want it as a tensor, then it's better to offload it to a separate function.
+        # Currently using global sum of distances, instead of neighbor-only sums. 
+        # One may argue that this might not be suitable for each agent due to local vision, but... otherwise,
+        # if they can't see anything, then they'll think they miinimized the punishment!
+        rewards = self.find_rewards(diff_norm, action, rewards)
+        ### ======= Add some more terms to rewards\
+        # rewards -= np.sum(diff_norm, axis=1)
+
         # Calculate adjacency matrix. Credit: GRASP code
-        self.Adj = (diff_norm < self.o_radius).astype(np.float32)
+        self.Adj = (diff_norm < self.o_radius).astype(np.float32) - np.eye(self.N)
         # print(self.Adj, diff_norm)
         diff = diff * self.Adj.reshape((self.N,1,self.N))
 
         # Take the rows that can be observed as output
-        state_observs = self.attach_nonlin_features(diff[:,:self.no,:])
-
-        # Then we want a reward as a list.
-        # If we want it as a tensor, then it's better to offload it to a separate function.
-        # rewards = self.find_rewards(diff, rewards)
-        rewards -= np.sum(diff_norm, axis=1)
+        state_observs = self.attach_nonlin_features(diff[:,:self.no,:], action)
 
         # Return: Observation, reward, done or not, ???
+        self.step_count += 1
         return state_observs, rewards, done, {}
     
-    def find_rewards(self, diff, rewards=None):
+    def find_rewards(self, diff, action, rewards=None):
         # Inputs: diff - current state differences
         #         rewards - additional things to add to the final rewards
         if rewards is None:
             rewards = np.zeros((self.N,))
+        # print(rewards)
+
+        # Parameters for loss terms
+        sod_w = 4
+        nos_w = 0.1
+        nos_base = 1.05
+        mov_w = 5
+        if self.input_type == U_ACCELERATION:
+            mov_w *= (self.v_max / self.a_max)
 
         # Find rewards from the current observable state / current state.
         # The inner call turns diff into a 2D array full of x distances.
-        # The outer call sums the distances up for each agent.
-        rewards -= np.sum( np.linalg.norm(diff[:,:2,:], ord=2, axis=1), axis=1 )
+        # The outer call sums the distances up for each agent. Sum_of_distances
+        # sod = np.sum( np.linalg.norm(diff[:,:2,:], ord=2, axis=1), axis=1 )
+        sod = np.sum(diff, axis=1)
+        rewards -= sod * sod_w
+
+        # In addition, we want to restrict agents from breaking the boundaries, and doing other bad things.
+        # Boundary punshment is already insiide the provided rewards argument. 
+
+        # We don't need to add punishment to convergence time if using accumulative reward, but still, 
+        # we can add some term here. Maybe an exponential one. Number_of_steps
+        nos = self.step_count
+        # rewards -= nos * nos_w
+        # rewards -= pow(nos_base, nos) * nos_w
+        rewards -= nos*nos*nos_w
+
+        # Next, we could constrain the input size, be it velocity or acceleration.
+        # If we're using acceleration, it might be better to downscale this thing, because accelerations' values are larger
+        mov = np.linalg.norm(action, ord=2, axis=0)
+        rewards -= mov * mov_w
+        # print(sod*sod_w)
+        # print(mov*mov_w)
+        # print(rewards)
         return rewards
 
     def controller(self):
@@ -234,12 +274,27 @@ class ConsensusContEnv(gym.Env):
             return np.clip(acc_control, -self.a_max, self.a_max)
     
     ### TODO: Attach nonlinear features behind state_observs
-    def attach_nonlin_features(self, obsvs):
-        # Input shape: (N, no, N); i.e. each agent's entire observation, all stacked together
-        return obsvs
+    def attach_nonlin_features(self, obsvs, action=None):
+        # Input shape: obsvs (N, no, N); i.e. each agent's entire observation, all stacked together
+        # Currently, the output stacks the observed neighbor actions (for the previous time) at the end.
+        # action shape shouuld be (self.na,N), the same as required in filter_neighbor_actions()
+        if self.observe_action == O_ACTION:
+            if action is None:
+                action = np.zeros((self.na,self.N))
+            return np.concatenate((obsvs, self.filter_neighbor_actions(action)),axis=1)
+        else:
+            return obsvs
+
+    def filter_neighbor_actions(self, action):
+        # Input shape: action (self.na,N) is an array recording all agents' actions at some point.
+        # Output shape: (N,self.na,N) array where the input is filtered according to adjacency matrix.
+        # You can also use this method to obtain broadcasted actioini plan.
+        # self.Adj has shape (N,N). Need to add diagonal 1s because agent should be able to see its own actions
+        return (self.Adj + np.eye(self.N)).reshape(self.N,1,self.N) * action
 
     def reset(self):
         # Reset the state of the environment to an initial state
+        self.step_count = 0
 
         # Initialize state space
         self.state = np.random.rand(self.ns, self.N)
