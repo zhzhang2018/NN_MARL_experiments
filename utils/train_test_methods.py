@@ -23,7 +23,8 @@ FUTURE_REWARD_YES_NORMALIZE = 2
 
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
-          update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99):
+          update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99, 
+          loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[]):
     test_hists = []
     steps = 0
     if memory is None:
@@ -50,6 +51,8 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
         action_pool = []
         reward_pool = []
         next_state_pool = []
+        loss_history.append([])
+        loss_historyA.append([])
 
         for t in range(num_iteration):
 #             agent.net.train()
@@ -96,6 +99,26 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                     transitions = memory.sample(len(memory))
                     batch = Transition(*zip(*transitions))
                     agent.optimize_model(batch, **{'B':len(memory)})
+                loss_history[-1].append(agent.losses[:])
+#                 print(e,t,agent.losses)
+                agent.losses=[]
+                # Also record scheduler history for learning rate. If the scheduler is a Plateau one, then
+                # we can know from the learning rate if we're in a flatter area.
+                # https://discuss.pytorch.org/t/how-to-retrieve-learning-rate-from-reducelronplateau-scheduler/54234/2
+                # The scheduler requires the validation loss - can I just use the average training loss instead?
+#                 try:
+#                     agent.scheduler.step(np.mean(loss_history[-1]))
+#                     lr_history.append(agent.optimizer.param_groups[0]['lr'])
+#                 except:
+#                     agent.schedulerC.step(np.mean(loss_history[-1]))
+#                     lr_history.append(agent.optimizerC.param_groups[0]['lr'])
+                try:
+                    loss_historyA[-1].append(agent.lossesA[:])
+                    agent.lossesA=[]
+#                     agent.schedulerA.step(np.mean(loss_historyA[-1]))
+#                     lr_historyA.append(agent.optimizerA.param_groups[0]['lr'])
+                except:
+                    pass
             elif update_mode == UPDATE_ON_POLICY:
                 # This case would ditch sampling, and just update by the current thing
                 print("Not implemented!!!!")
@@ -139,7 +162,25 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 transitions = memory.sample(len(memory))
                 batch = Transition(*zip(*transitions))
                 agent.optimize_model(batch, **{'B':len(memory)})
-            
+            loss_history[-1].append(agent.losses[:])
+            agent.losses=[]
+            # Also record scheduler history for learning rate. If the scheduler is a Plateau one, then
+            # we can know from the learning rate if we're in a flatter area.
+            # https://discuss.pytorch.org/t/how-to-retrieve-learning-rate-from-reducelronplateau-scheduler/54234/2
+#             try:
+#                 agent.scheduler.step(np.mean(loss_history[-1]))
+#                 lr_history.append(agent.optimizer.param_groups[0]['lr'])
+#             except:
+#                 agent.schedulerC.step(np.mean(loss_history[-1]))
+#                 lr_history.append(agent.optimizerC.param_groups[0]['lr'])
+            try:
+                loss_historyA[-1].append(agent.lossesA[:])
+                agent.lossesA=[]
+#                 agent.schedulerA.step(np.mean(loss_historyA[-1]))
+#                 lr_historyA.append(agent.optimizerA.param_groups[0]['lr'])
+            except:
+                pass
+        
         if debug:
             print("Episode ", e, " finished; t = ", t)
         

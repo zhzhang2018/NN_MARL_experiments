@@ -38,7 +38,7 @@ class PolicyNet(nn.Module):
 # Implements a net that tries to predict the reward for a state-action pair.
 # Should only be able to take in one input, not inputs for all agents
 class RewardNet(nn.Module):
-    def __init__(self, N, ns=2, na=2, hidden=24):
+    def __init__(self, N, ns=2, na=2, hidden=24, leaky=0.01):
         super(RewardNet, self).__init__()
         self.N = N # Number of agents
 
@@ -50,10 +50,15 @@ class RewardNet(nn.Module):
 
 #         self.FTlayers = nn.ModuleList([self.flt1,self.flt2])
 #         self.RNlayers = nn.ModuleList([self.fc1,self.fc2,self.fc3])
+        
         self.FTlayers = nn.ModuleList([nn.Flatten(), nn.Flatten()])
         self.RNlayers = nn.ModuleList([
             nn.Linear(ns*self.N + na, hidden),
+            nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, hidden), 
+            nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, 1)
         ])
 
@@ -77,11 +82,12 @@ class RewardNet(nn.Module):
         y = self.FTlayers[1](y)
         x = torch.cat( (x, y), dim=1 ).squeeze()
 #         print(x.shape, y.shape)
-        for i in range(len(self.RNlayers)-1):
-            x = torch.relu(self.RNlayers[i](x))
+        for i in range(len(self.RNlayers)):#-1):
+            x = self.RNlayers[i](x)
+#             x = torch.relu(self.RNlayers[i](x))
 #         for fc in self.RNlayers[:-1]:
 #             x = torch.relu(fc(x))
-        x = self.RNlayers[-1](x)
+#         x = self.RNlayers[-1](x)
         # x = torch.sigmoid(x) # Range = [0,1]
         return x
 
@@ -109,7 +115,7 @@ class RewardStateNet(nn.Module):
 
 # Implements a net that tries to predict an action (with a given range, perhaps)
 class ActionNet(nn.Module):
-    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1]):
+    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1], leaky=0.01):
         super(ActionNet, self).__init__()
         self.N = N # Number of agents
         self.range = action_range[1] - action_range[0]
@@ -125,8 +131,11 @@ class ActionNet(nn.Module):
         self.FTlayers = nn.ModuleList([nn.Flatten()])
         self.ANlayers = nn.ModuleList([
             nn.Linear(ns*self.N, hidden),
+            nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
             nn.Linear(hidden, hidden), 
-            nn.Linear(hidden, na)
+            nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
+            nn.Linear(hidden, na), 
+            nn.Tanh()
         ])
         
         # Initialization? 
@@ -143,7 +152,8 @@ class ActionNet(nn.Module):
         for flt in self.FTlayers:
             x = flt(x)
         for fc in self.ANlayers:
-            x = torch.tanh(fc(x))
+            x = fc(x)
+#             x = torch.tanh(fc(x))
 #             x = torch.relu(fc(x)) # Could it solve the gradient problem?
         return x * self.range * 0.5 + self.offset
 
@@ -213,8 +223,8 @@ class EnergyNet(nn.Module):
 # Implements the transfer learning functionality for neural nets
 class ActionNetTF(ActionNet):
     def __init__(self, N, prevN, path, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 tf_hidden=24):
-        super(ActionNetTF, self).__init__(prevN, ns, na, hidden, action_range)
+                 tf_hidden=24, leaky=0.01):
+        super(ActionNetTF, self).__init__(prevN, ns, na, hidden, action_range, leaky)
         self.N = N # Number of agents
 
         # Load layers
@@ -232,7 +242,8 @@ class ActionNetTF(ActionNet):
         
         # Here's hoping that this would train...
         self.ANlayers.insert(0,nn.Linear(ns*N, tf_hidden))
-        self.ANlayers.insert(1,nn.Linear(tf_hidden, ns*prevN))
+        self.ANlayers.insert(1,nn.Tanh())
+        self.ANlayers.insert(2,nn.Linear(tf_hidden, ns*prevN))
         
 #         self.ANlayers.insert(0,nn.Linear(tf_hidden, ns*prevN))
 #         self.ANlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
@@ -241,8 +252,8 @@ class ActionNetTF(ActionNet):
         
         
 class RewardNetTF(RewardNet):
-    def __init__(self, N, prevN, path, ns=2, na=5, hidden=24, tf_hidden=24):
-        super(RewardNetTF, self).__init__(prevN, ns, na, hidden)
+    def __init__(self, N, prevN, path, ns=2, na=5, hidden=24, tf_hidden=24, leaky=0.01):
+        super(RewardNetTF, self).__init__(prevN, ns, na, hidden, leaky)
         
         self.N = N # Number of agents
         
@@ -260,7 +271,8 @@ class RewardNetTF(RewardNet):
         # self.RNlayers = [self.tf1, self.tf2] + self.RNlayers
         
         self.RNlayers.insert(0,nn.Linear(ns*N+na, tf_hidden))
-        self.RNlayers.insert(1,nn.Linear(tf_hidden, ns*prevN + na))
+        self.RNlayers.insert(1,nn.LeakyReLU(leaky))
+        self.RNlayers.insert(2,nn.Linear(tf_hidden, ns*prevN + na))
         
 #         self.RNlayers.insert(0,nn.Linear(tf_hidden, ns*prevN + na))
 #         self.RNlayers.insert(0,nn.Linear(tf_hidden, tf_hidden))
@@ -269,7 +281,7 @@ class RewardNetTF(RewardNet):
 
 # Implement a CNN to learn reward mapping directly
 class RewardCNN(nn.Module):
-    def __init__(self, N, ns=2, na=2, hidden=4, n_hid=2, in_features=1):
+    def __init__(self, N, ns=2, na=2, hidden=4, n_hid=2, in_features=1, leaky=0.01):
         super().__init__()
         self.N = N # Number of agents
         self.hidden = hidden # Number of channels for intermediate layers
@@ -290,6 +302,7 @@ class RewardCNN(nn.Module):
                 layerlist.append(nn.Conv2d(
                     in_channels=hidden, out_channels=hidden, kernel_size=(1, 1), stride=(1, 1)
                 )) # (B, H, F, N/1) --> (B, H, F, N/1)
+            layerlist.append(nn.LeakyReLU(leaky))
         # Aggregate the features and gather all the channels
         layerlist.append(nn.Conv2d(
                 in_channels=hidden, out_channels=1, kernel_size=(ns+na, 1), stride=(1, 1)
@@ -305,13 +318,86 @@ class RewardCNN(nn.Module):
         x = torch.unsqueeze(x, dim=1) # (B, ns, N) --> (B, 1, ns, N)
 #         print(x.shape, y.shape)
         x = torch.cat( (x, y), dim=2 )
-        for i in range(len(self.RCNNlayers)-1):
-            x = torch.relu(self.RCNNlayers[i](x))
-        x = self.RCNNlayers[-1](x)
+        for i in range(len(self.RCNNlayers)):#-1):
+            x = self.RCNNlayers[i](x)
+#             x = torch.relu(self.RCNNlayers[i](x))
+#         x = self.RCNNlayers[-1](x)
         # x = torch.sigmoid(x) # Range = [0,1]
         x = torch.squeeze(x)
         return x
 
+from torchvision.models.resnet import *
+# Or use this one: https://github.com/kuangliu/pytorch-cifar/blob/master/models/resnet.py
+class RewardResNet(ResNet):
+    def __init__(self, N,
+        block, layers, num_classes=2, zero_init_residual=False,
+        groups=1, width_per_group=64, replace_stride_with_dilation=None, 
+        ns=2, na=2, hidden=64, n_hid=2, in_features=1):
+        super(ResNet, self).__init__()
+        norm_layer = nn.BatchNorm2d
+        self._norm_layer = norm_layer
+
+        self.N = N # Number of agents
+        self.na = na
+        self.inplanes = hidden
+        self.hidden = hidden
+        self.dilation = 1
+        if replace_stride_with_dilation is None:
+            # each element in the tuple indicates if we should replace
+            # the 2x2 stride with a dilated convolution instead
+            replace_stride_with_dilation = [False, False, False]
+        if len(replace_stride_with_dilation) != 3:
+            raise ValueError("replace_stride_with_dilation should be None "
+                             "or a 3-element tuple, got {}".format(replace_stride_with_dilation))
+        self.groups = groups
+        self.base_width = width_per_group
+        self.conv1 = nn.Conv2d(1, self.inplanes, kernel_size=1, stride=1,
+                               bias=False)
+        self.bn1 = norm_layer(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=1, stride=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=(1,N),
+                                       dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=1,
+                                       dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=1,
+                                       dilate=replace_stride_with_dilation[2])
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(512 * block.expansion, 1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)  # type: ignore[arg-type]
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
+                    
+        self.RRNlayers = nn.ModuleList([self.conv1,self.bn1,self.relu,self.maxpool,
+                                         self.layer1,self.layer2,self.layer3,self.layer4,self.avgpool,self.fc]) 
+
+    def forward(self, x,y):
+        # Assumption: y started off as an action (B,na,???), and we need it to become (B,1,na,N)
+        y = y.view((-1,1,self.na,1))
+#         print(x.shape, y.shape)
+        y = y.repeat(1,1,1,self.N)
+        x = torch.unsqueeze(x, dim=1) # (B, ns, N) --> (B, 1, ns, N)
+#         print(x.shape, y.shape)
+        x = torch.cat( (x, y), dim=2 )
+        x = self._forward_impl(x) # Inherited
+        x = torch.squeeze(x)
+        return x
+    
 # Implement a CNN to learn action mapping directly
 class ActionCNN(nn.Module):
     def __init__(self, N, ns=2, na=2, hidden=4, n_hid=2, in_features=1, action_range=[-1,1]):

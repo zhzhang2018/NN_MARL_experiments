@@ -7,6 +7,14 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+# Training modes
+UPDATE_PER_ITERATION = 0
+UPDATE_PER_EPISODE = 1
+UPDATE_ON_POLICY = 2
+FUTURE_REWARD_YES = 0
+FUTURE_REWARD_NO = 1
+FUTURE_REWARD_YES_NORMALIZE = 2
+
 # Run with baseline (e.g. expert)
 def run_expert(env, num_iteration=200, seed=2020):
     reward_hist_hst = []
@@ -101,7 +109,7 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
     if num_iteration > 0:
         max_num_iteration = num_iteration
     else:
-        max_num_iteration = max([max(max_num_iteration, max([max([len(h) for h in hh]) for hh in hhh])) for hhh in reward_hists])
+        max_num_iteration = max([max(num_iteration, max([max([len(h) for h in hh]) for hh in hhh])) for hhh in reward_hists])
     
     for i,hhh in enumerate(reward_hists):
         num_ep = np.arange(len(hhh))*ep_int
@@ -134,6 +142,56 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
     ax1.legend(bbox_to_anchor=(1.05, 1))
     ax3.legend(bbox_to_anchor=(1.05, 1))
 
+# Plots out loss history data
+def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION):
+    fig, (ax1, ax2) = plt.subplots(2, figsize=(12,7))
+    fig.suptitle('Top: Total (average loss per iteartion) per episode; Bottom: Iteration before done')
+
+    if num_iteration > 0:
+        max_num_iteration = num_iteration
+    else:
+        max_num_iteration = max([max(num_iteration, max([len(hh)] for hh in hhh)) for hhh in hists])
+    
+    for i,hhh in enumerate(hists):
+        num_ep = np.arange(len(hhh))
+        if log:
+            re_avg = [ np.log(-1/sum([np.mean(h) for h in hh])) for hh in hhh ] # Mean of cumulative rewards for each ep
+        else:
+            # h: List of losses per iteration; hh: List of iterations per episode; hhh: List of episodes per model
+            re_avg = [ sum([np.mean(h) for h in hh]) for hh in hhh ]
+        iter_count = [ len(hh) for hh in hhh ]
+        wid = 1 / len(hists) * 0.8 
+        offset = i * wid - 0.4
+        ax1.bar(num_ep+offset, re_avg, label=hist_names[i], width=wid)
+        if update_mode==UPDATE_PER_ITERATION:
+            ax2.bar(num_ep+offset, iter_count, label=hist_names[i], width=wid)
+    log_txt = ''
+    if log:
+        log_txt = 'Log '
+    ax1.set_ylabel(log_txt+'Loss history (cumulative of iteration average)')
+    ax2.set_ylabel('# of iterations (average)')
+    ax2.set_xlabel('# of episodes trained')
+    ax2.legend(bbox_to_anchor=(1.05, 1)) # https://stackoverflow.com/questions/4700614/how-to-put-the-legend-out-of-the-plot
+    ax1.legend(bbox_to_anchor=(1.05, 1))
+
+# plot learning rate history... assuming it's updated per iteration, not per episode. Otherwise you can just
+# use the two plotting methods above...
+def plot_lr(hists=[], hist_names=[], log=True):
+
+    for i,hhh in enumerate(hists):
+        num_ep = np.arange(len(hhh))
+        if log:
+            plt.plot(num_ep, np.log(hhh), label=hist_names[i])
+        else:
+            plt.plot(num_ep, hhh, label=hist_names[i])
+    log_txt = ''
+    if log:
+        log_txt = 'Log '
+    plt.ylabel(log_txt+'learning rate history')
+    plt.xlabel('# of steps updated')
+    plt.legend(bbox_to_anchor=(1.05, 1))
+    plt.show()
+    
 # Check gradient history
 # Ref: https://discuss.pytorch.org/t/check-gradient-flow-in-network/15063/10
 def plot_grad_flow(named_parameters):

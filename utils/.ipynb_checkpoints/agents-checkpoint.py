@@ -31,6 +31,7 @@ class BaseAgent:
         self.N = N
         self.needsExpert = False
         self.name = 'BaseAgent'
+        self.losses = []
     
     def select_action(self, state, **kwargs):
         pass
@@ -145,6 +146,7 @@ class LearnerAgent(BaseAgent):
         else:
             self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer) # Not used for LA yet
         self.needsExpert = True
         self.name = 'LearnerAgent'
         
@@ -176,7 +178,7 @@ class LearnerAgent(BaseAgent):
 #         print("2nd Last layer gradients after backward: ", torch.mean(self.net.ANlayers[1].weight.grad))
 #         print("Last     layer gradients after backward: ", torch.mean(self.net.ANlayers[0].weight.grad))
         self.optimizer.step()
-        
+        self.losses.append(loss.detach().numpy())
         # Check sizes - attach real size after those lines.
 #         print(state_batch.shape)
 #         print(action_batch.shape, pred_action.shape)
@@ -191,6 +193,7 @@ class LearnerCNNAgent(BaseAgent):
         else:
             self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer) # Not used yet
         self.needsExpert = True
         self.name = 'LearnerCNNAgent'
         
@@ -221,6 +224,7 @@ class LearnerCNNAgent(BaseAgent):
         print("2nd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[1].weight.grad))
         print("The Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[0].weight.grad))
         self.optimizer.step()
+        self.losses.append(loss.detach().numpy())
     
 # Agent for leaning reward
 class RewardAgent(BaseAgent):
@@ -235,7 +239,10 @@ class RewardAgent(BaseAgent):
             self.net = RewardNet(N, ns, na, hidden)
         else:
             self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
-        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.optimizer = torch.optim.Adam(self.net.parameters(), lr=learning_rate)#RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        # Othe rchoices ffor scheduler: https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
+        # Scheduler.step() should be called in the training method.
         self.na = na
         self.name = 'RewardAgent'
     
@@ -289,6 +296,7 @@ class RewardAgent(BaseAgent):
 #         print(self.net.RNlayers[0].weight.grad)
         # print("Should be the same as: ", self.net.fc1.weight.grad)
         self.optimizer.step()
+        self.losses.append(loss.detach().numpy())
         
 # Agent for leaning reward
 class RewardCNNAgent(BaseAgent):
@@ -301,6 +309,7 @@ class RewardCNNAgent(BaseAgent):
         else:
             self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.na = na
         self.name = 'RewardCNNAgent'
     
@@ -345,6 +354,66 @@ class RewardCNNAgent(BaseAgent):
         print("2nd Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[1].weight.grad))
         print("The Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[0].weight.grad))
         self.optimizer.step()
+        self.losses.append(loss.detach().numpy())
+        
+from torchvision.models.resnet import Bottleneck
+# Agent for leaning reward
+class RewardRNAgent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, n_hid=2, in_features=1, learning_rate=0.01, centralized=False,
+                 prevN=10, load_path=None):
+        super().__init__(device, N)
+        self.centralized = centralized
+        if load_path is None:
+            self.net = RewardResNet(N, Bottleneck,[2, 2, 2, 2], num_classes=na,
+                                    ns=ns, na=na, hidden=hidden, n_hid=n_hid, in_features=in_features)
+        self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
+        self.na = na
+        self.name = 'RewardRNAgent'
+    
+    # Idk how to implement this... randomly sample a bunch of possible actions and then pick the best one?
+    def select_action(self, state, **kwargs):
+        num_sample = kwargs.get('num_sample', 50)
+        action_space = kwargs.get('action_space', [-1,1])
+        with torch.no_grad():
+            actions = torch.from_numpy( 
+                    np.random.rand(num_sample, self.na).astype('float32')
+                ) * (action_space[1]-action_space[0])+action_space[0]
+            rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
+            bestind = rewards.max(0)[1]
+#             print(bestind, actions)
+#             print(bestind,actions, actions.shape, rewards, rewards.shape)
+            return actions[bestind.detach()].numpy()#detach()
+    
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch[0]))
+#         print(B, len(batch[0]), len(batch), len(batch.action))
+        # This class would assume that the optimal action is stored in batch input
+        state_batch = torch.cat(batch.state)
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+
+        # Find loss & optimize the model
+        self.net.train()
+#         print("State batch shape = ", state_batch.view(B, -1, self.N).shape, "; action shape = ", action_batch.view(B, -1, 1).shape)
+        pred_reward = self.net(
+            state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1)
+        ) # Shape is (B,ns,N) and (B,na) for input and (B, ) for output
+#         print("Reward batch shape = ", reward_batch.shape, "; prediction shape = ", pred_reward.shape)
+
+        self.optimizer.zero_grad()
+        loss = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        print("RCNN loss: ", loss)
+#         print("First layer gradients before backward: ", self.net.RNlayers[-1].weight.grad)
+#         print("Last layer gradients before backward: ", self.net.RNlayers[0].weight.grad)
+        loss.backward()
+#         print("First    layer gradients after backward: ", torch.mean(self.net.RNlayers[-1].weight.grad))
+#         print("4th Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[3].weight.grad))
+#         print("3rd Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[2].weight.grad))
+#         print("2nd Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[1].weight.grad))
+#         print("The Last layer gradients after backward: ", torch.mean(self.net.RCNNlayers[0].weight.grad))
+        self.optimizer.step()
+        self.losses.append(loss.detach().numpy())
         
 # Agent for leaning action by multiplying it with reward...?
 class RewardActionAgent(BaseAgent):
@@ -361,6 +430,7 @@ class RewardActionAgent(BaseAgent):
         else:
             self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.name = 'RewardActionAgent'
         
     # Picks an action based on given state
@@ -384,6 +454,7 @@ class RewardActionAgent(BaseAgent):
         loss = (pred_action * reward_batch.view(B,-1)).sum()
         loss.backward()
         self.optimizer.step()
+        self.losses.append(loss.detach().numpy())
         
 # Actor-Critic attempt #1
 # Properties: Directly estimates action without sampling around. 
@@ -408,6 +479,8 @@ class AC1Agent(BaseAgent):
             self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
         self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
         self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
+        self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.na = na
         self.name = 'AC1Agent'
         
@@ -471,6 +544,8 @@ class AC2Agent(BaseAgent):
             self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
         self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
         self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
+        self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.na = na
         self.name = 'AC2Agent'
         
@@ -529,6 +604,9 @@ class AC2Agent(BaseAgent):
         print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
 #         print(self.netA.ANlayers[0].weight.grad)
         self.optimizerA.step()
+    
+        self.losses.append(lossC.detach().numpy())
+        self.lossesA.append(lossA.detach().numpy())
     
         # UnFreeze Critic?
         for nfc in self.netC.RNlayers:
@@ -591,6 +669,8 @@ class AC3Agent(BaseAgent):
             self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
         self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
         self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
+        self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.na = na
         self.name = 'AC3Agent'
         
@@ -648,6 +728,9 @@ class AC3Agent(BaseAgent):
 #         print(self.netA.ANlayers[0].weight.grad)
         self.optimizerA.step()
     
+        self.losses.append(lossC.detach().numpy())
+        self.lossesA.append(lossA.detach().numpy())
+        
         # UnFreeze Critic?
 #         for nfc in self.netC.RNlayers:
 #             nfc.weight.requires_grad = True
@@ -706,6 +789,7 @@ class AC4Agent(BaseAgent):
             self.net = ActorCriticNet(N, prevN, load_pathA, ns, na, hidden, action_range)
         
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate) # Or separate them?
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.na = na
         self.name = 'AC4Agent'
         
@@ -788,6 +872,8 @@ class DDPGAgent(BaseAgent):
             
         self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
         self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
+        self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.na = na
         self.name = 'DDPGAgent'
         
@@ -844,6 +930,10 @@ class DDPGAgent(BaseAgent):
         self.optimizerA.step() # Do this in a later step to avoid
         # issues like this: https://github.com/pytorch/pytorch/issues/39141#issuecomment-636881953
         
+        
+        self.losses.append(lossC.detach().numpy())
+        self.lossesA.append(lossA__.detach().numpy())
+        
         # Soft update (copied from reference)
         for target_param, param in zip(self.netAT.parameters(), self.netA.parameters()):
             target_param.data.copy_( target_param.data * (1.0 - self.tau) + param.data * self.tau )
@@ -870,6 +960,7 @@ class GradientAgent(BaseAgent):
         else:
             self.net = EnergyNet(N, 2, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.needsExpert = True
         self.name = 'GradientAgent'
 #         self.action_range = action_range

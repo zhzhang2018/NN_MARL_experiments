@@ -13,6 +13,11 @@ O_VELOCITY = 1
 O_ACCELERATION = 2
 O_ACTION = 1
 O_NO_ACTION = 0
+
+DIST_REWARD = 0
+TIME_REWARD = 1
+ACT_REWARD = 2
+ALL_REWARD = 3
 # If you want nonlinear featuers, you should be responsible for passing them in during calling.
 # Not implemented for now, though.
 
@@ -21,7 +26,8 @@ class ConsensusContEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4,
-                 input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION):
+                 input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
+                 reward_mode=ALL_REWARD):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
@@ -33,10 +39,12 @@ class ConsensusContEnv(gym.Env):
         # The layout is going to be: x, y, dx, dy (,d2x, d2y) where the parenthesis one depnds on input_type
         self.no = self.nd * (observe_type+1)
         # And we can attach custom-designed features after it
-        self.nf = self.no + len(additional_features) + self.na # self.na for observing neighbr actions
+        self.np = 1 # Number of additional parameters, e.g. time index
+        self.nf = self.no + len(additional_features) + self.na + self.np # self.na for observing neighbr actions
         self.observe_action = observe_action
         # if self.observe_action == O_ACTION:
         #     self.no = self.nf
+        self.reward_mode = reward_mode
 
         self.input_type = input_type
         self.observe_type = observe_type
@@ -227,7 +235,7 @@ class ConsensusContEnv(gym.Env):
             rewards = np.zeros((self.N,))
         # print(rewards)
 
-        # Parameters for loss terms
+        # Parameters (weights) for loss terms
         sod_w = 4
         nos_w = 0.1
         nos_base = 1.05
@@ -240,7 +248,8 @@ class ConsensusContEnv(gym.Env):
         # The outer call sums the distances up for each agent. Sum_of_distances
         # sod = np.sum( np.linalg.norm(diff[:,:2,:], ord=2, axis=1), axis=1 )
         sod = np.sum(diff, axis=1)
-        rewards -= sod * sod_w
+        if reward_mode == DIST_REWARD or reward_mode == ALL_REWARD:
+            rewards -= sod * sod_w
 
         # In addition, we want to restrict agents from breaking the boundaries, and doing other bad things.
         # Boundary punshment is already insiide the provided rewards argument. 
@@ -248,14 +257,16 @@ class ConsensusContEnv(gym.Env):
         # We don't need to add punishment to convergence time if using accumulative reward, but still, 
         # we can add some term here. Maybe an exponential one. Number_of_steps
         nos = self.step_count
-        # rewards -= nos * nos_w
-        # rewards -= pow(nos_base, nos) * nos_w
-        rewards -= nos*nos*nos_w
+        if reward_mode == TIME_REWARD or reward_mode == ALL_REWARD:
+            # rewards -= nos * nos_w
+            # rewards -= pow(nos_base, nos) * nos_w
+            rewards -= nos*nos*nos_w
 
         # Next, we could constrain the input size, be it velocity or acceleration.
         # If we're using acceleration, it might be better to downscale this thing, because accelerations' values are larger
         mov = np.linalg.norm(action, ord=2, axis=0)
-        rewards -= mov * mov_w
+        if reward_mode == ACT_REWARD or reward_mode == ALL_REWARD:
+            rewards -= mov * mov_w
         # print(sod*sod_w)
         # print(mov*mov_w)
         # print(rewards)
