@@ -32,6 +32,9 @@ class BaseAgent:
         self.needsExpert = False
         self.name = 'BaseAgent'
         self.losses = []
+        self.lossesA = []
+        self.centralized = False
+        self.centralizedA = False
     
     def select_action(self, state, **kwargs):
         pass
@@ -138,35 +141,50 @@ class LearnerAgent(BaseAgent):
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-#         if centralized:
-#             pass
-#         else:
-        if load_path is None:
-            self.net = ActionNet(N, ns, na, hidden, action_range)
+        self.centralizedA = self.centralized
+        if centralized:
+            # If centralized, then ns should be no larger than env.ns, and the user should be responsible for passing in the right value
+            if load_path is None:
+                self.net = ActionNet(N, ns, na*N, hidden, action_range)
+            else:
+                self.net = ActionNetTF(N, prevN, load_path, ns, na*N, hidden, action_range)
         else:
-            self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
+            if load_path is None:
+                self.net = ActionNet(N, ns, na, hidden, action_range)
+            else:
+                self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer) # Not used for LA yet
         self.needsExpert = True
         self.name = 'LearnerAgent'
         
+        self.ns = ns  # Probably forcifully remove all the rest of the parameters to avoid shape mismatch
+        self.na = na
+        
     # Picks an action based on given state
     def select_action(self, state, **kwargs):
 #         print(self.net(state.view(1,-1,self.N)), self.net(state.view(1,-1,self.N)).shape)
         with torch.no_grad():
-            return self.net(state.view(1,-1,self.N)).squeeze().detach().numpy()# # Expected size: (B=1, na, N) -> (na,N)?
+            if self.centralized:
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+            else:
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() # Expected size: (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
         state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        action_batch = torch.from_numpy(np.asarray(batch.action)) # Should I squeeze?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         # Find loss & optimize the model
         self.net.train() 
-        pred_action = self.net(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+        pred_action = self.net(state_batch.view(B, -1, self.N)[:,:self.ns,:])
+        if self.centralized:
+            pred_action = pred_action.view(-1,self.N,self.na) 
+        # Input shape should be (B,no,N) and output be (B,na),
+        # which is then reshaped from (B,na*N) into (B,N,na) if centralized
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
         self.optimizer.zero_grad()
@@ -188,19 +206,33 @@ class LearnerCNNAgent(BaseAgent):
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if load_path is None:
-            self.net = ActionCNN(N, ns, na, hidden, n_hid, in_features, action_range)
+        self.centralizedA = self.centralized
+        if centralized:
+            if load_path is None:
+                self.net = ActionCNN(N, ns, na*N, hidden, n_hid, in_features, action_range)
+            else:
+                self.net = ActionNetTF(N, prevN, load_path, ns, na*N, hidden, action_range)
         else:
-            self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
+            if load_path is None:
+                self.net = ActionCNN(N, ns, na, hidden, n_hid, in_features, action_range)
+            else:
+                self.net = ActionNetTF(N, prevN, load_path, ns, na, hidden, action_range)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer) # Not used yet
         self.needsExpert = True
         self.name = 'LearnerCNNAgent'
         
+        self.ns = ns
+        self.na = na
+        
     # Picks an action based on given state
     def select_action(self, state, **kwargs):
         with torch.no_grad():
-            return self.net(state.view(1,-1,self.N)).squeeze().detach().numpy()# # Expected size: (B=1, ns, N) -> (B=1, na, N) -> (na,N)?
+            if self.centralized:
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+            else:
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() 
+                # Expected size: (B=1, na, N) -> (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
@@ -212,17 +244,19 @@ class LearnerCNNAgent(BaseAgent):
 
         # Find loss & optimize the model
         self.net.train() 
-        pred_action = self.net(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+        pred_action = self.net(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
+        if self.centralized:
+            pred_action = pred_action.view(-1,self.N,self.na) 
 #         print("Action batch shape = ", action_batch.shape, "; prediction shape = ", pred_action.shape)
 
         self.optimizer.zero_grad()
         loss = torch.nn.functional.mse_loss(action_batch, pred_action)
-        print("ACNN loss: ", loss)
+#         print("ACNN loss: ", loss)
         loss.backward()
-        print("4th Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[3].weight.grad))
-        print("3rd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[2].weight.grad))
-        print("2nd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[1].weight.grad))
-        print("The Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[0].weight.grad))
+#         print("4th Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[3].weight.grad))
+#         print("3rd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[2].weight.grad))
+#         print("2nd Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[1].weight.grad))
+#         print("The Last layer gradients after backward: ", torch.mean(self.net.ACNNlayers[0].weight.grad))
         self.optimizer.step()
         self.losses.append(loss.detach().numpy())
     
@@ -232,13 +266,17 @@ class RewardAgent(BaseAgent):
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-#         if centralized:
-#             pass
-#         else:
-        if load_path is None:
-            self.net = RewardNet(N, ns, na, hidden)
+        self.centralizedA = self.centralized
+        if centralized:
+            if load_path is None:
+                self.net = RewardNet(N, ns, na*N, hidden)
+            else:
+                self.net = RewardNetTF(N, prevN, load_path, ns, na*N, hidden)
         else:
-            self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
+            if load_path is None:
+                self.net = RewardNet(N, ns, na, hidden)
+            else:
+                self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=learning_rate)#RMSprop(self.net.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         # Othe rchoices ffor scheduler: https://pytorch.org/docs/stable/optim.html#how-to-adjust-learning-rate
@@ -249,13 +287,22 @@ class RewardAgent(BaseAgent):
     # Idk how to implement this... randomly sample a bunch of possible actions and then pick the best one?
     def select_action(self, state, **kwargs):
         num_sample = kwargs.get('num_sample', 50)
+        if self.centralized:
+            # If centralized, technically we would need to multiply the potential action sample amount by 2^N.
+            ### TODO: Implement a better method for finding the optimal action in this case.
+            num_sample *= self.N*2
         action_space = kwargs.get('action_space', [-1,1])
         with torch.no_grad():
 #             actions = torch.from_numpy( np.random.rand(num_sample, self.na, self.N) )
-            actions = torch.from_numpy( 
-                    np.random.rand(num_sample, self.na).astype('float32')
-                ) * (action_space[1]-action_space[0])+action_space[0]
-#             print(state.shape, actions.shape)
+            if self.centralized:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.N, self.na).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
+            else:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.na).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
+#             print(state.expand(num_sample, -1, -1).shape, actions.shape)
 #             print(state)
             rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
 #             print(rewards.shape, rewards.max(0))
@@ -266,6 +313,11 @@ class RewardAgent(BaseAgent):
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch[0]))
 #         print(B, len(batch[0]), len(batch), len(batch.action))
+        ### TODO: BatchNorm is known to introduce issue when batch size is 1. Find a better way to solve this, instead
+        # of using the simple method below.
+        if B <= 1:
+            print("I didn't learn anything!")
+            return
         # This class would assume that the optimal action is stored in batch input
         state_batch = torch.cat(batch.state)
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
@@ -304,10 +356,17 @@ class RewardCNNAgent(BaseAgent):
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if load_path is None:
-            self.net = RewardCNN(N, ns, na, hidden, n_hid, in_features)
+        self.centralizedA = self.centralized
+        if centralized:
+            if load_path is None:
+                self.net = RewardCNN(N, ns, na*N, hidden, n_hid, in_features)
+            else:
+                self.net = RewardNetTF(N, prevN, load_path, ns, na*N, hidden)
         else:
-            self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
+            if load_path is None:
+                self.net = RewardCNN(N, ns, na, hidden, n_hid, in_features)
+            else:
+                self.net = RewardNetTF(N, prevN, load_path, ns, na, hidden)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.na = na
@@ -316,11 +375,20 @@ class RewardCNNAgent(BaseAgent):
     # Idk how to implement this... randomly sample a bunch of possible actions and then pick the best one?
     def select_action(self, state, **kwargs):
         num_sample = kwargs.get('num_sample', 50)
+        if self.centralized:
+            # If centralized, technically we would need to multiply the potential action sample amount by 2^N.
+            ### TODO: Implement a better method for finding the optimal action in this case.
+            num_sample *= self.N*2
         action_space = kwargs.get('action_space', [-1,1])
         with torch.no_grad():
-            actions = torch.from_numpy( 
-                    np.random.rand(num_sample, self.na).astype('float32')
-                ) * (action_space[1]-action_space[0])+action_space[0]
+            if self.centralized:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.na*self.N).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
+            else:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.na).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
             rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
             bestind = rewards.max(0)[1]
 #             print(bestind, actions)
@@ -363,9 +431,15 @@ class RewardRNAgent(BaseAgent):
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
-        if load_path is None:
-            self.net = RewardResNet(N, Bottleneck,[2, 2, 2, 2], num_classes=na,
-                                    ns=ns, na=na, hidden=hidden, n_hid=n_hid, in_features=in_features)
+        self.centralizedA = self.centralized
+        if centralized:
+            if load_path is None:
+                self.net = RewardResNet(N, Bottleneck,[2, 2, 2, 2], num_classes=na,
+                                        ns=ns, na=na*N, hidden=hidden, n_hid=n_hid, in_features=in_features)
+        else:
+            if load_path is None:
+                self.net = RewardResNet(N, Bottleneck,[2, 2, 2, 2], num_classes=na,
+                                        ns=ns, na=na, hidden=hidden, n_hid=n_hid, in_features=in_features)
         self.optimizer = torch.optim.RMSprop(self.net.parameters(), lr=learning_rate)
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer)
         self.na = na
@@ -374,11 +448,20 @@ class RewardRNAgent(BaseAgent):
     # Idk how to implement this... randomly sample a bunch of possible actions and then pick the best one?
     def select_action(self, state, **kwargs):
         num_sample = kwargs.get('num_sample', 50)
+        if self.centralized:
+            # If centralized, technically we would need to multiply the potential action sample amount by 2^N.
+            ### TODO: Implement a better method for finding the optimal action in this case.
+            num_sample *= self.N*2
         action_space = kwargs.get('action_space', [-1,1])
         with torch.no_grad():
-            actions = torch.from_numpy( 
-                    np.random.rand(num_sample, self.na).astype('float32')
-                ) * (action_space[1]-action_space[0])+action_space[0]
+            if self.centralized:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.na*self.N).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
+            else:
+                actions = torch.from_numpy( 
+                        np.random.rand(num_sample, self.na).astype('float32')
+                    ) * (action_space[1]-action_space[0])+action_space[0]
             rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
             bestind = rewards.max(0)[1]
 #             print(bestind, actions)
@@ -462,10 +545,11 @@ class RewardActionAgent(BaseAgent):
 #             Is useless.
 class AC1Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
         self.centralized = centralized
+        self.centralizedA = centralizedA
         
         # Load models
         if load_pathA is None:
@@ -527,10 +611,11 @@ class AC1Agent(BaseAgent):
 #             Directly updates Reward based on state and action without considering the future.
 class AC2Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
         self.centralized = centralized
+        self.centralizedA = centralizedA
         
         # Load models
         if load_pathA is None:
@@ -568,13 +653,13 @@ class AC2Agent(BaseAgent):
         self.optimizerC.zero_grad()
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
         lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
-        print("Critic loss: ", lossC)
+#         print("Critic loss: ", lossC)
         lossC.backward()
 #         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
 #         print(self.netC.RNlayers[0].weight.grad)
-        print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
-        print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
-        print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
+#         print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+#         print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+#         print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
         self.optimizerC.step()
         
         # Find loss for Actor
@@ -584,24 +669,28 @@ class AC2Agent(BaseAgent):
         
         # Freeze Critic?
         for nfc in self.netC.RNlayers:
-            nfc.weight.requires_grad = False
-            nfc.bias.requires_grad = False
+            try:
+                nfc.weight.requires_grad = False
+                nfc.bias.requires_grad = False
+            except:
+                pass
+            # try-catch exists because activation layers don't have such fields
         # Eval critic? 
         self.netC.eval()
 
         pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
 #         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
-        print("Actor loss = reward: ", lossA)
+#         print("Actor loss = reward: ", lossA)
 #         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
         lossA.backward()
-        print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
-        print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
-        print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
+#         print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
+#         print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
+#         print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
 #         print(self.netC.RNlayers[0].weight.grad)
-        print("Last  layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[0].weight.grad))
-        print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
-        print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
+#         print("Last  layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[0].weight.grad))
+#         print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
+#         print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
 #         print(self.netA.ANlayers[0].weight.grad)
         self.optimizerA.step()
     
@@ -610,8 +699,11 @@ class AC2Agent(BaseAgent):
     
         # UnFreeze Critic?
         for nfc in self.netC.RNlayers:
-            nfc.weight.requires_grad = True
-            nfc.bias.requires_grad = True
+            try:
+                nfc.weight.requires_grad = True
+                nfc.bias.requires_grad = True
+            except:
+                pass
         # UnEval critic? 
         self.netC.train()
         
@@ -652,25 +744,40 @@ class AC2Agent(BaseAgent):
 # http://rail.eecs.berkeley.edu/deeprlcourse-fa17/f17docs/lecture_5_actor_critic_pdf.pdf
 class AC3Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 learning_rateA=0.01, learning_rateC=0.02, centralized=False,
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
         self.centralized = centralized
+        self.centralizedA = centralizedA
         
         # Load models
-        if load_pathA is None:
-            self.netA = ActionNet(N, ns, na, hidden, action_range)
+        if centralizedA:
+            if load_pathA is None:
+                self.netA = ActionNet(N, ns, na*N, hidden, action_range)
+            else:
+                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na*N, hidden, action_range)
         else:
-            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
-            
-        if load_pathC is None:
-            self.netC = RewardNet(N, ns, na, hidden)
+            if load_pathA is None:
+                self.netA = ActionNet(N, ns, na, hidden, action_range)
+            else:
+                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+
+        if centralized:
+            if load_pathC is None:
+                self.netC = RewardNet(N, ns, na*N, hidden)
+            else:
+                self.netC = RewardNetTF(N, prevN, load_pathC, ns, na*N, hidden)
         else:
-            self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+            if load_pathC is None:
+                self.netC = RewardNet(N, ns, na, hidden)
+            else:
+                self.netC = RewardNetTF(N, prevN, load_pathC, ns, na, hidden)
+                
         self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
         self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
         self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
         self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
+        self.ns = ns
         self.na = na
         self.name = 'AC3Agent'
         
@@ -678,12 +785,21 @@ class AC3Agent(BaseAgent):
     # In a future AC you could use RewardAgent's action selection instead.
     def select_action(self, state, **kwargs):
         with torch.no_grad():
-            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+#             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+            if self.centralized:
+                return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+            else:
+                return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() # Expected size: (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
-        # This class would assume that the optimal action is stored in batch input
+        ### TODO: BatchNorm is known to introduce issue when batch size is 1. Find a better way to solve this, instead
+        # of using the simple method below.
+        if B <= 1:
+            print("I didn't learn anything!")
+            return
+        
         state_batch = torch.cat(batch.state)
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
@@ -711,9 +827,30 @@ class AC3Agent(BaseAgent):
         # Eval critic? 
         self.netC.eval()
 
-        pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+        pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
 #         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
-        lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
+        if self.centralizedA:
+            pred_action = pred_action.view(B,self.na,self.N) 
+        
+        # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...
+        if self.centralized:
+            print("Option unsupported! Centralized Critic wants to take in the environment state, but Actor needs judgement based")
+            # If centralized, then it would want all actions...
+            if self.centralizedA:
+                # Which is convenient in this scenario.
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
+            else:
+                # Where we need to explicitly put things together...
+                pass
+#                 torch.cat()
+        else:
+            # If it wants to take things one by one... then it's in luck if Actor isn't centralized.
+            if self.centralizedA:
+                # Do it piece by piece
+                pass
+            else:
+        #         lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
 #         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
 #         print("Actor loss = reward: ", lossA)
 #         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
@@ -777,10 +914,11 @@ class AC3Agent(BaseAgent):
 # Also, how is the action value supposed to be incorporated into the loss??
 class AC4Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 learning_rate=0.01, centralized=False,
+                 learning_rate=0.01, centralized=False, centralizedA=False,
                  prevN=10, load_path=None):
         super().__init__(device, N)
         self.centralized = centralized
+        self.centralizedA = centralizedA
         
         # Load models
         if load_path is None:
@@ -841,11 +979,12 @@ class AC4Agent(BaseAgent):
 # Should this be trained without using rewards that are already cumulative in the future?
 class DDPGAgent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
-                 learning_rateA=0.01, learning_rateC=0.02, tau=0.1, centralized=False,
+                 learning_rateA=0.01, learning_rateC=0.02, tau=0.1, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
         self.tau = tau
         self.centralized = centralized
+        self.centralizedA = centralizedA
         
         # Load models
         if load_pathA is None:

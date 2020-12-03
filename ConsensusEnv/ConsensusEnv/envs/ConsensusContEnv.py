@@ -14,25 +14,36 @@ O_ACCELERATION = 2
 O_ACTION = 1
 O_NO_ACTION = 0
 
-DIST_REWARD = 0
-TIME_REWARD = 1
-ACT_REWARD = 2
-ALL_REWARD = 3
+DIST_REWARD = 0x1
+TIME_REWARD = 0x2
+ACT_REWARD = 0x4
+ALL_REWARD = DIST_REWARD | TIME_REWARD | ACT_REWARD
 # If you want nonlinear featuers, you should be responsible for passing them in during calling.
 # Not implemented for now, though.
+
+# Boundary policies
+NO_PENALTY = 0
+SOFT_PENALTY = 1 # Very light penalty
+HARD_PENALTY = 2 # Very expensive penalty
+DEAD_ON_TOUCH = 3 # Terminates simulation when one of them is out of bound, together with hard penalty
+
+# Reward for achieving consensus policies
+END_ON_CONSENSUS = 0
+REWARD_IF_CONSENSUS = 1 # Doesn't stop, but keeps giving positive reward when seen as achieved consensus
 
 class ConsensusContEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4,
+    def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4, max_iter=200,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
-                 reward_mode=ALL_REWARD):
+                 reward_mode=ALL_REWARD, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
         self.N = N
         self.nd = 2 # Number of dimensions for each agent
+
         self.na = self.nd # Number of actions for each agent
         self.ns = self.nd * 3 # Number of internal states for each agent: x, y, dx, dy, d2x, d2y
         # self.no = Number of observable states for each agent.
@@ -40,14 +51,21 @@ class ConsensusContEnv(gym.Env):
         self.no = self.nd * (observe_type+1)
         # And we can attach custom-designed features after it
         self.np = 1 # Number of additional parameters, e.g. time index
-        self.nf = self.no + len(additional_features) + self.na + self.np # self.na for observing neighbr actions
+        
         self.observe_action = observe_action
+        if self.observe_action:
+            self.nf = self.no + len(additional_features) + self.na + self.np # self.na for observing neighbr actions
+        else:
+            self.nf = self.no + len(additional_features) + self.np
         # if self.observe_action == O_ACTION:
         #     self.no = self.nf
+        self.max_iter = max_iter
         self.reward_mode = reward_mode
 
         self.input_type = input_type
         self.observe_type = observe_type
+        self.boundary_policy = boundary_policy
+        self.finish_reward_policy = finish_reward_policy
 
         self.dt = dt
         self.v = v
@@ -126,7 +144,8 @@ class ConsensusContEnv(gym.Env):
                 motion[:,i] = [-self.v, 0]
         return motion
 
-    # Input is a 2xN array of positions. Returns a list of ints as indications.
+    # Input is a 2xN array of positions. 
+    # Returns a list of ints as indications: 0 means the current position is out-of-bound, and 1 means it's within bounds
     def is_in_bound(self, state=None):
         if state is None:
             state = self.state
@@ -163,8 +182,16 @@ class ConsensusContEnv(gym.Env):
         out_of_bound = self.is_in_bound(temp_state)
         
         # Find reward via summed total distance for each agent. 
-        oob_reward = 10 # Deduct this value for out-of-bound agents
+        oob_reward = 10 # Deduct this value for out-of-bound agents.
+        # Decide the penalty value according to the boundary policy. We'll deal with the DEAD_ON_ARRIVAL policy later.
+        if self.boundary_policy == NO_PENALTY:
+            oob_reward = 0
+        elif self.boundary_policy == HARD_PENALTY or self.boundary_policy == DEAD_ON_TOUCH:
+            oob_reward = 100000
         rewards = (out_of_bound - 1) * oob_reward # shape = (N,)
+        # Because out_of_bound is 0 for out-of-bound ones, and 1 for ones staying inside, the (out_of_bound-1) term
+        # would be -1 for bad agents and 0 for good agents. Thus, out-of-bound agents get negative reward for being bad.
+
         done = True
 
         # self.state is a NSxN array containing locations.
@@ -172,6 +199,7 @@ class ConsensusContEnv(gym.Env):
         #     This broadcasting can be done by using shape (N,NS,1) tensor minus shape (1,NS,N) tensor.
         diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
         diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
+        diff_norm_unclipped = diff_norm
 
         # Check if it's ended / deserves to end by verifying distances between agents
         ### TODO: Proposal to make "done" criterion include near-zero speed and acceleration 
@@ -181,6 +209,12 @@ class ConsensusContEnv(gym.Env):
             # Only grant it as "done" if it has lasted long enough
             self.done_count += 1
             done = self.done_count >= self.done_thres
+            # Check our ending policy
+            if self.finish_reward_policy == END_ON_CONSENSUS:
+                pass
+            elif self.finish_reward_policy == REWARD_IF_CONSENSUS:
+                done = self.step_count >= self.max_iter
+                rewards += 10 * self.done_count
         else:
             self.done_count = 0
         # print(done, self.done_count, self.done_thres)
@@ -212,7 +246,10 @@ class ConsensusContEnv(gym.Env):
         # Currently using global sum of distances, instead of neighbor-only sums. 
         # One may argue that this might not be suitable for each agent due to local vision, but... otherwise,
         # if they can't see anything, then they'll think they miinimized the punishment!
-        rewards = self.find_rewards(diff_norm, action, rewards)
+        # One may opt to use the unclipped differences instead...
+        rewards = self.find_rewards(diff_norm_unclipped, action, rewards)
+        # rewards = self.find_rewards(diff_norm, action, rewards)
+
         ### ======= Add some more terms to rewards\
         # rewards -= np.sum(diff_norm, axis=1)
 
@@ -226,6 +263,14 @@ class ConsensusContEnv(gym.Env):
 
         # Return: Observation, reward, done or not, ???
         self.step_count += 1
+
+        # Early termination if using strict boundary policy
+        if self.boundary_policy == DEAD_ON_TOUCH and (out_of_bound == 0).any():
+            done = True
+            rewards += (out_of_bound - 1) * oob_reward * 100
+        elif self.boundary_policy == HARD_PENALTY and (out_of_bound == 0).all():
+            done = True
+            rewards += (out_of_bound - 1) * oob_reward * 100
         return state_observs, rewards, done, {}
     
     def find_rewards(self, diff, action, rewards=None):
@@ -248,7 +293,8 @@ class ConsensusContEnv(gym.Env):
         # The outer call sums the distances up for each agent. Sum_of_distances
         # sod = np.sum( np.linalg.norm(diff[:,:2,:], ord=2, axis=1), axis=1 )
         sod = np.sum(diff, axis=1)
-        if reward_mode == DIST_REWARD or reward_mode == ALL_REWARD:
+        # if self.reward_mode == DIST_REWARD or self.reward_mode == ALL_REWARD:
+        if self.reward_mode & DIST_REWARD:
             rewards -= sod * sod_w
 
         # In addition, we want to restrict agents from breaking the boundaries, and doing other bad things.
@@ -257,7 +303,8 @@ class ConsensusContEnv(gym.Env):
         # We don't need to add punishment to convergence time if using accumulative reward, but still, 
         # we can add some term here. Maybe an exponential one. Number_of_steps
         nos = self.step_count
-        if reward_mode == TIME_REWARD or reward_mode == ALL_REWARD:
+        # if self.reward_mode == TIME_REWARD or self.reward_mode == ALL_REWARD:
+        if self.reward_mode & TIME_REWARD:
             # rewards -= nos * nos_w
             # rewards -= pow(nos_base, nos) * nos_w
             rewards -= nos*nos*nos_w
@@ -265,7 +312,8 @@ class ConsensusContEnv(gym.Env):
         # Next, we could constrain the input size, be it velocity or acceleration.
         # If we're using acceleration, it might be better to downscale this thing, because accelerations' values are larger
         mov = np.linalg.norm(action, ord=2, axis=0)
-        if reward_mode == ACT_REWARD or reward_mode == ALL_REWARD:
+        # if self.reward_mode == ACT_REWARD or self.reward_mode == ALL_REWARD:
+        if self.reward_mode & ACT_REWARD:
             rewards -= mov * mov_w
         # print(sod*sod_w)
         # print(mov*mov_w)
@@ -286,15 +334,25 @@ class ConsensusContEnv(gym.Env):
     
     ### TODO: Attach nonlinear features behind state_observs
     def attach_nonlin_features(self, obsvs, action=None):
-        # Input shape: obsvs (N, no, N); i.e. each agent's entire observation, all stacked together
-        # Currently, the output stacks the observed neighbor actions (for the previous time) at the end.
-        # action shape shouuld be (self.na,N), the same as required in filter_neighbor_actions()
+        # Input shape: obsvs (N, no, N); i.e. each agent's entire observation, all stacked together.
+        ### TODO: Attach nonlinear features here.
+        # Currently, the output stacks the observed neighbor actions (for the previous time) after the observations.
+        # action shape shouuld be (self.na,N), the same as required in filter_neighbor_actions().
+        # Then, if there's any additional parameter the agent should know of, then each of them is attached in a separate
+        # slice afte the observed actions, each only showing up in the corresponding agent's index.
+
+        # Attach observed action
         if self.observe_action == O_ACTION:
             if action is None:
                 action = np.zeros((self.na,self.N))
-            return np.concatenate((obsvs, self.filter_neighbor_actions(action)),axis=1)
-        else:
-            return obsvs
+            obsvs = np.concatenate((obsvs, self.filter_neighbor_actions(action)),axis=1)
+        # For each observed parameter, make an identity matrix of the right shape, and slap it onto obsvs
+        idmatrix = np.eye(self.N).reshape(self.N,1,self.N)
+        obsvs = np.concatenate((
+                obsvs,
+                idmatrix * self.step_count
+            ), axis=1)
+        return obsvs
 
     def filter_neighbor_actions(self, action):
         # Input shape: action (self.na,N) is an array recording all agents' actions at some point.

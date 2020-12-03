@@ -57,22 +57,31 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
         reward_hist = []
 
         state = env.reset()
+        if agent.centralized:
+            state = env.state
         state = torch.from_numpy(state).float()
         state = Variable(state)
         if debug:
             env.render()
 
         for t in range(num_iteration):  
-            # Try to pick an action, react, and store the resulting behavior in the pool here
-            actions = []
-            for i in range(N):
-                action = agent.select_action(state[i], **{
+            # Try to pick an action
+            if agent.centralized:
+                action = agent.select_action(state, **{
                     'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
-                })
-                actions.append(action)
-            action = np.array(actions).T 
+                }).T
+            else:
+                actions = []
+                for i in range(N):
+                    action = agent.select_action(state[i], **{
+                        'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                    })
+                    actions.append(action)
+                action = np.array(actions).T 
 
             next_state, reward, done, _ = env.step(action)
+            if agent.centralized:
+                next_state = env.state
             next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
             state = next_state
             cum_reward += sum(reward)
@@ -82,6 +91,9 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
                 img = env.render(mode="rgb_array")
                 plt.imshow(img)
                 plt.savefig(imdir + f + '-{:03d}.jpg'.format(t))
+                plt.clf() # Clear the entire figure, but cla() (clear current axis) might also work
+                # Ref: https://stackoverflow.com/questions/8213522/when-to-use-cla-clf-or-close-for-clearing-a-plot-in-matplotlib
+                # Ref: https://stackoverflow.com/questions/18829472/why-does-plt-savefig-performance-decrease-when-calling-in-a-loop
             steps += 1
 
             if done:
@@ -94,7 +106,7 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
     return reward_hist_hst
 
 # Plots out reward history data
-def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_iteration=0, N_list=None):
+def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_iteration=0, N_list=None, bar=True):
     # reward_hist : List of histories of reward histories
     # ep_int : number of episodes / size of intervals between two history lists
     # N_list : List of number of agents, or the denominator to average the total reward upon
@@ -126,9 +138,14 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
         
         wid = 1 / len(hist_names) * 0.8 * ep_int
         offset = i * wid - 0.4 * ep_int
-        ax1.bar(num_ep+offset, re_avg, label=hist_names[i], width=wid)
-        ax2.bar(num_ep+offset, it_avg, label=hist_names[i], width=wid)
-        ax3.bar(num_ep+offset, max_iter_count, label=hist_names[i], width=wid)
+        if bar:
+            ax1.bar(num_ep+offset, re_avg, label=hist_names[i], width=wid)
+            ax2.bar(num_ep+offset, it_avg, label=hist_names[i], width=wid)
+            ax3.bar(num_ep+offset, max_iter_count, label=hist_names[i], width=wid)
+        else:
+            ax1.plot(num_ep,re_avg, label=hist_names[i])
+            ax2.plot(num_ep,it_avg, label=hist_names[i])
+            ax3.plot(num_ep,max_iter_count, label=hist_names[i])
 #     ax2.title.set_text('# of episodes trained')
     log_txt = ''
     if log:
@@ -143,7 +160,7 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
     ax3.legend(bbox_to_anchor=(1.05, 1))
 
 # Plots out loss history data
-def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION):
+def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION, bar=True):
     fig, (ax1, ax2) = plt.subplots(2, figsize=(12,7))
     fig.suptitle('Top: Total (average loss per iteartion) per episode; Bottom: Iteration before done')
 
@@ -162,9 +179,14 @@ def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mo
         iter_count = [ len(hh) for hh in hhh ]
         wid = 1 / len(hists) * 0.8 
         offset = i * wid - 0.4
-        ax1.bar(num_ep+offset, re_avg, label=hist_names[i], width=wid)
-        if update_mode==UPDATE_PER_ITERATION:
-            ax2.bar(num_ep+offset, iter_count, label=hist_names[i], width=wid)
+        if bar:
+            ax1.bar(num_ep+offset, re_avg, label=hist_names[i], width=wid)
+            if update_mode==UPDATE_PER_ITERATION:
+                ax2.bar(num_ep+offset, iter_count, label=hist_names[i], width=wid)
+        else:
+            ax1.plot(num_ep, re_avg, label=hist_names[i])
+            if update_mode==UPDATE_PER_ITERATION:
+                ax2.plot(num_ep, iter_count, label=hist_names[i])
     log_txt = ''
     if log:
         log_txt = 'Log '

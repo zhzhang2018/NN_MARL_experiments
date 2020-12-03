@@ -42,6 +42,8 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
     for e in range(num_episode):
         steps = 0
         state = env.reset()
+        if agent.centralized:
+            state = env.state
         state = torch.from_numpy(state).float()
         state = Variable(state)
         if debug:
@@ -58,18 +60,25 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
 #             agent.net.train()
             agent.set_train(True)
             # Try to pick an action, react, and store the resulting behavior in the pool here
-            actions = []
-            for i in range(N):
-                action = agent.select_action(state[i], **{
-                    'steps_done':t, 'num_sample':50, 'action_space':action_space
-                })
-                actions.append(action)
-            action = np.array(actions).T # Shape would become (2,N)
-            # print(action, actions)
-            # action = actions
-            # action = np.array(actions)
+            if agent.centralized:
+                action = agent.select_action(state, **{
+                        'steps_done':t, 'num_sample':50, 'action_space':action_space
+                    }).T
+            else:
+                actions = []
+                for i in range(N):
+                    action = agent.select_action(state[i], **{
+                        'steps_done':t, 'num_sample':50, 'action_space':action_space
+                    })
+                    actions.append(action)
+                action = np.array(actions).T # Shape would become (2,N)
+                # print(action, actions)
+                # action = actions
+                # action = np.array(actions)
 
             next_state, reward, done, _ = env.step(action)
+            if agent.centralized:
+                next_state = env.state
             next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
             action = action.T # Turn shape back to (N,2)
 
@@ -78,16 +87,29 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 actions = env.controller()
                 action = actions.T # Shape should already be (2,N), so we turn it into (N,2)
             
-            if reward_mode == FUTURE_REWARD_NO:
-                # Push everything directly inside if we don't use future discounts
-                for i in range(N):
-                    memory.push(state[i], action[i], next_state[i], reward[i])
+            if not(agent.centralized):
+                if reward_mode == FUTURE_REWARD_NO:
+                    # Push everything directly inside if we don't use future discounts
+                    for i in range(N):
+                        memory.push(state[i], action[i], next_state[i], reward[i])
+                else:
+                    # Store and push them outside the loop
+                    state_pool.append(state)
+                    action_pool.append(action)
+                    reward_pool.append(reward)
+                    next_state_pool.append(next_state)
             else:
-                # Store and push them outside the loop
-                state_pool.append(state)
-                action_pool.append(action)
-                reward_pool.append(reward)
-                next_state_pool.append(next_state)
+                # Centralized training should directly use the real states, instead of observations
+                reward = np.sum(reward)
+                if reward_mode == FUTURE_REWARD_NO:
+                    # Push everything directly inside if we don't use future discounts
+                    memory.push(state, action, env.state, reward)
+                else:
+                    # Store and push them outside the loop
+                    state_pool.append(state)
+                    action_pool.append(action)
+                    reward_pool.append(reward)
+                    next_state_pool.append(env.state)
 
             # Update 1028: Moved this training step outside the loop
             if update_mode == UPDATE_PER_ITERATION:
@@ -134,24 +156,23 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Took ", t, " steps to converge")
                 break
         
-        if reward_mode == FUTURE_REWARD_YES:
+        if reward_mode == FUTURE_REWARD_YES or reward_mode == FUTURE_REWARD_YES_NORMALIZE:
             for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
-#                 print(j, len(reward), -j-1, reward_pool)
                 if j > 0:
                     reward_pool[-j-1] += gamma * reward_pool[-j]
-                for i in range(N):
-                    memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-                                next_state_pool[-j-1][i], reward_pool[-j-1][i])
-        elif reward_mode == FUTURE_REWARD_YES_NORMALIZE:
-            for j in range(len(reward_pool)):
-                if j > 0:
-                    reward_pool[-j-1] += gamma * reward_pool[-j]
-            reward_pool = torch.tensor(reward_pool)
-            reward_pool = (reward_pool - reward_pool.mean()) / reward_pool.std()
-            for j in range(len(reward_pool)):
-                for i in range(N):
-                    memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-                                next_state_pool[-j-1][i], reward_pool[-j-1][i])
+            if reward_mode == FUTURE_REWARD_YES_NORMALIZE:
+                reward_pool = torch.tensor(reward_pool)
+                reward_pool = (reward_pool - reward_pool.mean()) / reward_pool.std()
+            
+            if agent.centralized:
+                for j in range(len(reward_pool)):
+                    memory.push(state_pool[-j-1], action_pool[-j-1], 
+                                next_state_pool[-j-1], reward_pool[-j-1])
+            else:
+                for j in range(len(reward_pool)):
+                    for i in range(N):
+                        memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
+                                    next_state_pool[-j-1][i], reward_pool[-j-1][i])
 
         if update_mode == UPDATE_PER_EPISODE:
             if len(memory) >= BATCH_SIZE:
@@ -210,6 +231,8 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
 
             np.random.seed(env_seeds[e])
             state = env.reset()
+            if agent.centralized:
+                state = env.state
             state = torch.from_numpy(state).float()
             state = Variable(state)
             if debug:
@@ -217,15 +240,22 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
 
             for t in range(num_iteration):  
                 # Try to pick an action, react, and store the resulting behavior in the pool here
-                actions = []
-                for i in range(N):
-                    action = agent.select_action(state[i], **{
-                        'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
-                    })
-                    actions.append(action)
-                action = np.array(actions).T 
+                if agent.centralized:
+                    action = agent.select_action(state, **{
+                            'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                        }).T
+                else:
+                    actions = []
+                    for i in range(N):
+                        action = agent.select_action(state[i], **{
+                            'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                        })
+                        actions.append(action)
+                    action = np.array(actions).T 
 
                 next_state, reward, done, _ = env.step(action)
+                if agent.centralized:
+                    next_state = env.state
                 next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
                 state = next_state
                 cum_reward += sum(reward)

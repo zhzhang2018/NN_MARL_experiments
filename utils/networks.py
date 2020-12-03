@@ -80,7 +80,8 @@ class RewardNet(nn.Module):
         # Updated 11/04 to suit for more flexible children
         x = self.FTlayers[0](x)
         y = self.FTlayers[1](y)
-        x = torch.cat( (x, y), dim=1 ).squeeze()
+#         print(x.shape, y.shape)
+        x = torch.cat( (x, y), dim=1 )#.squeeze() # Shouldd I have canclled the squeeze? With it, it may break down when batch size = 1
 #         print(x.shape, y.shape)
         for i in range(len(self.RNlayers)):#-1):
             x = self.RNlayers[i](x)
