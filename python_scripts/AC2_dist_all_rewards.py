@@ -16,6 +16,13 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.autograd import Variable
 
+from ..utils.ReplayMemory import * 
+from ..utils.networks import *
+from ..utils.agents import *
+from ..utils.plotting import *
+from ..utils.train_test_methods import *
+from ..utils.params import *
+
 # Ask for input configurations
 taskname = input("Enter task name that would be used to name all outputs: ")
 N = input("Number of agents: ")
@@ -30,13 +37,6 @@ plt.ion()
 
 # if gpu is to be used
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-from utils.ReplayMemory import * 
-from utils.networks import *
-from utils.agents import *
-from utils.plotting import *
-from utils.train_test_methods import *
-from utils.params import *
 
 input_type = U_VELOCITY
 observe_type = O_VELOCITY
