@@ -610,18 +610,21 @@ class AC1Agent(BaseAgent):
 # Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
 #             Directly updates Reward based on state and action without considering the future.
 class AC2Agent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
+        self.noise = add_noise
         self.centralized = centralized
         self.centralizedA = centralizedA
+        self.rand_modeA = rand_modeA
+        self.action_range = action_range
         
         # Load models
         if load_pathA is None:
-            self.netA = ActionNet(N, ns, na, hidden, action_range)
+            self.netA = ActionNet(N, ns, na, hidden, action_range, rand_mode=rand_modeA)
         else:
-            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+            self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range, rand_mode=rand_modeA)
             
         if load_pathC is None:
             self.netC = RewardNet(N, ns, na, hidden)
@@ -638,7 +641,12 @@ class AC2Agent(BaseAgent):
     # In a future AC you could use RewardAgent's action selection instead.
     def select_action(self, state, **kwargs):
         with torch.no_grad():
-            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+            if self.rand_modeA == NO_RAND:
+                return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+            elif self.rand_modeA == GAUSS_RAND:
+                # Should I take a sample, or should I just return the mean value?
+                distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                return distrb[:self.na]
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
@@ -678,12 +686,55 @@ class AC2Agent(BaseAgent):
         # Eval critic? 
         self.netC.eval()
 
-        pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
-        lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+        if self.rand_modeA == NO_RAND:
+            pred_action = self.netA(state_batch.view(B, -1, self.N)) # Input shape should be (B,no,N) and output be (B,na)
+            if self.noise:
+                # Add Gaussian noise. https://discuss.pytorch.org/t/writing-a-simple-gaussian-noise-layer-in-pytorch/4694
+                # Note that if you need to generate noise within Network class, then you need to use model.training
+                # to see if you're evaluating or training to decide if you want to add the noise to the output.
+                stddev = 0.1
+                added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+            lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
+        elif self.rand_modeA == GAUSS_RAND:
+            # Need to create a Gaussian distribution out of the given parameters (make sure stdev>0)... 
+            # and have to multiply log of likelihood for the outcome.
+            distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
+            pred_action = torch.zeros(B,self.na)
+            pred_probs = torch.zeros(B)
+#             for i in range(B):
+#                 # ref for implementation: 
+#                 # https://discuss.pytorch.org/t/actor-critic-with-multivariate-normal-network-weights-fail-to-update/74548/2
+#                 # https://pytorch.org/docs/stable/distributions.html#multivariatenormal
+#                 distrb = torch.distributions.multivariate_normal.MultivariateNormal(
+#                 # distrb = torch.distributions.Normal(
+#                     distrb_params[i,:self.na],
+#                     covariance_matrix=torch.diag( nn.functional.softplus( distrb_params[i,self.na:] ) )
+#                 )
+#                 # Need to keep action within limits
+#                 pred_action[i,:] = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+#                 pred_probs[i] = distrb.log_prob(pred_action[i,:])
+                
+            # https://stackoverflow.com/a/62933292
+            distrb = torch.distributions.Normal(
+                distrb_params[:,:self.na],
+                torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
+            )
+            # Need to keep action within limits
+            pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+            pred_probs = distrb.log_prob(pred_action)
+
+            ### !!!!!!! THE CORRECT ACTOR_CRITIC SHOULD USE THE ADVANTAGE, NOT THE REWARD !!!!!!!! FIX THIS
+            ## Problem with the above is that our Critic needs action as part of the input, and we might have
+            ## issue accessing the next state's reward (actual or predicted).
+            lossA = self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_probs
+            lossA = lossA.mean()
+
 #         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
 #         print("Actor loss = reward: ", lossA)
 #         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
+
         lossA.backward()
+
 #         print("Last  layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
 #         print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
 #         print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
@@ -692,6 +743,7 @@ class AC2Agent(BaseAgent):
 #         print("Mid   layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[1].weight.grad))
 #         print("Front layer Actor gradients after backward: ", torch.mean(self.netA.ANlayers[2].weight.grad))
 #         print(self.netA.ANlayers[0].weight.grad)
+
         self.optimizerA.step()
     
         self.losses.append(lossC.detach().numpy())
@@ -743,19 +795,22 @@ class AC2Agent(BaseAgent):
 # https://github.com/nikhilbarhate99/Actor-Critic-PyTorch/blob/01c833e83006be5762151a29f0719cc9c03c204d/model.py#L33
 # http://rail.eecs.berkeley.edu/deeprlcourse-fa17/f17docs/lecture_5_actor_critic_pdf.pdf
 class AC3Agent(BaseAgent):
-    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], 
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
                  prevN=10, load_pathA=None, load_pathC=None):
         super().__init__(device, N)
+        self.noise = add_noise
         self.centralized = centralized
         self.centralizedA = centralizedA
+        self.rand_modeA = rand_modeA
+        self.action_range = action_range
         
         # Load models
         if centralizedA:
             if load_pathA is None:
-                self.netA = ActionNet(N, ns, na*N, hidden, action_range)
+                self.netA = ActionNet(N, ns, na*N, hidden, action_range, rand_mode=rand_modeA)
             else:
-                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na*N, hidden, action_range)
+                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na*N, hidden, action_range, rand_mode=rand_modeA)
         else:
             if load_pathA is None:
                 self.netA = ActionNet(N, ns, na, hidden, action_range)
@@ -785,11 +840,21 @@ class AC3Agent(BaseAgent):
     # In a future AC you could use RewardAgent's action selection instead.
     def select_action(self, state, **kwargs):
         with torch.no_grad():
+            if self.rand_modeA == NO_RAND:
+                if self.centralized:
+                    return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                else:
+                    return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy()
+                # Expected size: (B=1, na, N) -> (na,N)?
+            elif self.rand_modeA == GAUSS_RAND:
+                # Should I take a sample, or should I just return the mean value?
+                if self.centralized:
+                    distrb = self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                    return distrb[:,:self.na]
+                else:
+                    distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                    return distrb[:self.na]
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
-            if self.centralized:
-                return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
-            else:
-                return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() # Expected size: (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
@@ -827,30 +892,51 @@ class AC3Agent(BaseAgent):
         # Eval critic? 
         self.netC.eval()
 
-        pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
-#         lossA = -self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).mean()
-        if self.centralizedA:
-            pred_action = pred_action.view(B,self.na,self.N) 
-        
-        # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...
-        if self.centralized:
-            print("Option unsupported! Centralized Critic wants to take in the environment state, but Actor needs judgement based")
-            # If centralized, then it would want all actions...
+        if self.rand_modeA == NO_RAND:
+            pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
             if self.centralizedA:
-                # Which is convenient in this scenario.
-                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
-            else:
-                # Where we need to explicitly put things together...
-                pass
-#                 torch.cat()
-        else:
-            # If it wants to take things one by one... then it's in luck if Actor isn't centralized.
-            if self.centralizedA:
-                # Do it piece by piece
-                pass
-            else:
-        #         lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
-                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
+                pred_action = pred_action.view(B,self.na,self.N) 
+            if self.noise:
+                # Add Gaussian noise. 
+                stddev = 0.1
+                added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+            lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
+        elif self.rand_modeA == GAUSS_RAND:
+            # TODO: Add centralized differentiations later
+            distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
+            pred_action = torch.zeros(B,self.na)
+            pred_probs = torch.zeros(B)
+            distrb = torch.distributions.Normal(
+                distrb_params[:,:self.na],
+                torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
+            )
+            # Need to keep action within limits
+            pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+            pred_probs = distrb.log_prob(pred_action)
+
+            lossA = -( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ) * pred_probs
+            lossA = lossA.mean()
+
+#         # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...
+# #         if self.centralized:
+# #             print("Option unsupported! Centralized Critic wants to take in the environment state, but Actor needs judgement based")
+# #             # If centralized, then it would want all actions...
+# #             if self.centralizedA:
+# #                 # Which is convenient in this scenario.
+# #                 lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
+# #             else:
+# #                 # Where we need to explicitly put things together...
+# #                 pass
+# # #                 torch.cat()
+# #         else:
+# #             # If it wants to take things one by one... then it's in luck if Actor isn't centralized.
+# #             if self.centralizedA:
+# #                 # Do it piece by piece
+# #                 pass
+# #             else:
+# #         #         lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
+# #                 lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
+
 #         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
 #         print("Actor loss = reward: ", lossA)
 #         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())

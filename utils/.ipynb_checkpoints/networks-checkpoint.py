@@ -2,6 +2,10 @@
 import torch
 import torch.nn as nn
 
+NO_RAND = 0
+UNIF_RAND = 1
+GAUSS_RAND = 2
+
 # Ref: https://github.com/Finspire13/pytorch-policy-gradient-example/blob/master/pg.py
 # Implements a network that takes state observations as input, and outputs (discrete) policy/action probabilities.
 # Note that PyTorch requires knowing the exact size of each layer...
@@ -116,11 +120,16 @@ class RewardStateNet(nn.Module):
 
 # Implements a net that tries to predict an action (with a given range, perhaps)
 class ActionNet(nn.Module):
-    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1], leaky=0.01):
+    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1], leaky=0.01, rand_mode=NO_RAND):
         super(ActionNet, self).__init__()
         self.N = N # Number of agents
         self.range = action_range[1] - action_range[0]
         self.offset = 0.5*(action_range[0]+action_range[1])
+        self.rand_mode = rand_mode
+        self.na = na
+        
+        if self.rand_mode == GAUSS_RAND or self.rand_mode == UNIF_RAND:
+            self.na *= 2
 
 #         self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
 #         self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
@@ -135,7 +144,7 @@ class ActionNet(nn.Module):
             nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
             nn.Linear(hidden, hidden), 
             nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
-            nn.Linear(hidden, na), 
+            nn.Linear(hidden, self.na), 
             nn.Tanh()
         ])
         
@@ -156,10 +165,19 @@ class ActionNet(nn.Module):
             x = fc(x)
 #             x = torch.tanh(fc(x))
 #             x = torch.relu(fc(x)) # Could it solve the gradient problem?
-        return x * self.range * 0.5 + self.offset
+        if self.rand_mode == NO_RAND or self.rand_mode == UNIF_RAND:
+            return x * self.range * 0.5 + self.offset
+        elif self.rand_mode == GAUSS_RAND:
+            x_mean = x[:self.na] * self.range * 0.5 + self.offset # Don't mess up the stdev
+            # Optionally, you can smooth out stdev to make sure it's non-negative.
+            # Ref of method: https://pytorch.org/docs/stable/generated/torch.nn.Softplus.html
+            # Ref of usage: https://github.com/zafarali/policy-gradient-methods/blob/f0d83a80ddc772dcad0c851aac9bfd41d436c274/pg_methods/policies.py#L82
+            # x[self.na:] = nn.functional.softplus(x[self.na:])
+            x_var = x[self.na:]
+            return torch.cat((x_mean, x_var))
 
 
-# Implements a net where actor and critic shares the first layer.
+# Implements a net where actor and critic shares the first layer. (Not used yet)
 # Here, the critic network doesn't depend on action no more. 
 class ActorCriticNet(nn.Module):
     def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1]):
