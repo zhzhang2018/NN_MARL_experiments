@@ -18,7 +18,7 @@ from torch.autograd import Variable
 
 import sys
 # sys.path.append("..")
-sys.path.append(".")
+sys.path.append(".") # https://stackoverflow.com/a/53918952
 import os
 # print (os.getcwd())
 
@@ -65,6 +65,9 @@ debug=False
 num_sample=50
 seed=22222
 hidden=32
+
+# rand_mode = NO_RAND
+rand_mode = GAUSS_RAND
 
 N_listv = [N] # [5,10,20]
 env_listv = []
