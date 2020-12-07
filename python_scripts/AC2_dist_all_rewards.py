@@ -17,10 +17,10 @@ import torchvision.transforms as T
 from torch.autograd import Variable
 
 import sys
-sys.path.append("..")
+# sys.path.append("..")
 sys.path.append(".")
 import os
-print (os.getcwd())
+# print (os.getcwd())
 
 # from ..utils.ReplayMemory import * 
 # from ..utils.networks import *
@@ -64,6 +64,7 @@ BATCH_SIZE=64#128
 debug=False
 num_sample=50
 seed=22222
+hidden=32
 
 N_listv = [N] # [5,10,20]
 env_listv = []
