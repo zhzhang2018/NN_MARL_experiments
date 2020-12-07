@@ -56,10 +56,10 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=5#00
+num_episode=500
 test_interval=10#0
-num_test=1#0#50
-num_iteration=20#0
+num_test=10#50
+num_iteration=200
 BATCH_SIZE=64#128
 debug=False
 num_sample=50
@@ -167,8 +167,10 @@ for i,lab in enumerate(labels):
 
 print("Finished running "+taskname)
 print("Trying to generate screenshots now...")
+return
 
-# Maybe save screenshots of real testing
+# Maybe save screenshots of real testing.
+# Still needs fixing... not complete yet
 for i,env_ in enumerate(env_listv):
     plot_test(AC2_listv[i], env_, fnames=[taskname+'_'+labels[i]+'_test{0}'.format(j) for j in range(1)],
         num_iteration=100, action_space=action_space, imdir='screencaps/',debug=debug)
