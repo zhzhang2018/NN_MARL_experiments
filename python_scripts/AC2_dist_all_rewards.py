@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.autograd import Variable
 
-from .utils.ReplayMemory import * 
+from NN_MARL_experiments.utils.ReplayMemory import * 
 from .utils.networks import *
 from .utils.agents import *
 from .utils.plotting import *
