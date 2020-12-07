@@ -65,6 +65,7 @@ debug=False
 num_sample=50
 seed=22222
 hidden=32
+action_space=[-1,1]
 
 # rand_mode = NO_RAND
 rand_mode = GAUSS_RAND
