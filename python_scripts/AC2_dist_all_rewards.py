@@ -16,12 +16,15 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from torch.autograd import Variable
 
-from NN_MARL_experiments.utils.ReplayMemory import * 
-from .utils.networks import *
-from .utils.agents import *
-from .utils.plotting import *
-from .utils.train_test_methods import *
-from .utils.params import *
+import sys
+sys.path.append("..")
+
+from utils.ReplayMemory import * 
+from utils.networks import *
+from utils.agents import *
+from utils.plotting import *
+from utils.train_test_methods import *
+from utils.params import *
 
 # Ask for input configurations
 taskname = input("Enter task name that would be used to name all outputs: ")
