@@ -49,6 +49,14 @@ def run_expert(env, num_iteration=200, seed=2020):
 def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imdir='', debug=True):
     reward_hist_hst = []
     N=env.N
+    
+    useVid = False
+    try:
+        img = env.render(mode="rgb_array")
+    except:
+        useVid = True
+        env = wrappers.Monitor(env, "/tmp/ConsensusContEnv:ConsensusContEnv-v0")
+    
     for e,f in enumerate(fnames):
         steps = 0
 #         agent.net.eval()
@@ -61,7 +69,7 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
             state = env.state
         state = torch.from_numpy(state).float()
         state = Variable(state)
-        if debug:
+        if debug and not useVid:
             env.render()
 
         for t in range(num_iteration):  
@@ -88,12 +96,15 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
             reward_hist.append(reward)
 
             if len(f) > 0:
-                img = env.render(mode="rgb_array")
-                plt.imshow(img)
-                plt.savefig(imdir + f + '-{:03d}.jpg'.format(t))
-                plt.clf() # Clear the entire figure, but cla() (clear current axis) might also work
-                # Ref: https://stackoverflow.com/questions/8213522/when-to-use-cla-clf-or-close-for-clearing-a-plot-in-matplotlib
-                # Ref: https://stackoverflow.com/questions/18829472/why-does-plt-savefig-performance-decrease-when-calling-in-a-loop
+                if useVid:
+                    env.render()
+                else:
+                    img = env.render(mode="rgb_array")
+                    plt.imshow(img)
+                    plt.savefig(imdir + f + '-{:03d}.jpg'.format(t))
+                    plt.clf() # Clear the entire figure, but cla() (clear current axis) might also work
+                    # Ref: https://stackoverflow.com/questions/8213522/when-to-use-cla-clf-or-close-for-clearing-a-plot-in-matplotlib
+                    # Ref: https://stackoverflow.com/questions/18829472/why-does-plt-savefig-performance-decrease-when-calling-in-a-loop
             steps += 1
 
             if done:

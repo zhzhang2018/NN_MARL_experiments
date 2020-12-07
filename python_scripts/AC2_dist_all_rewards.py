@@ -165,12 +165,13 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
 for i,lab in enumerate(labels):
     AC2_listv[i].save_model(taskname+'_'+lab)
 
+print("Finished running "+taskname)
+print("Trying to generate screenshots now...")
+
 # Maybe save screenshots of real testing
 for i,env_ in enumerate(env_listv):
     plot_test(AC2_listv[i], env_, fnames=[taskname+'_'+labels[i]+'_test{0}'.format(j) for j in range(1)],
         num_iteration=100, action_space=action_space, imdir='screencaps/',debug=debug)
-
-print("Finished running "+taskname)
 
 
 
