@@ -106,7 +106,7 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
     return reward_hist_hst
 
 # Plots out reward history data
-def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_iteration=0, N_list=None, bar=True):
+def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_iteration=0, N_list=None, bar=True, fname=''):
     # reward_hist : List of histories of reward histories
     # ep_int : number of episodes / size of intervals between two history lists
     # N_list : List of number of agents, or the denominator to average the total reward upon
@@ -158,9 +158,13 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
     ax2.legend(bbox_to_anchor=(1.05, 1)) # https://stackoverflow.com/questions/4700614/how-to-put-the-legend-out-of-the-plot
     ax1.legend(bbox_to_anchor=(1.05, 1))
     ax3.legend(bbox_to_anchor=(1.05, 1))
+    
+    if len(fname) > 0:
+        plt.savefig(fname+'.png')
+        fig.savefig(fname+'_backup.png')
 
 # Plots out loss history data
-def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION, bar=True):
+def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION, bar=True, fname=''):
     fig, (ax1, ax2) = plt.subplots(2, figsize=(12,7))
     fig.suptitle('Top: Total (average loss per iteartion) per episode; Bottom: Iteration before done')
 
@@ -195,6 +199,11 @@ def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mo
     ax2.set_xlabel('# of episodes trained')
     ax2.legend(bbox_to_anchor=(1.05, 1)) # https://stackoverflow.com/questions/4700614/how-to-put-the-legend-out-of-the-plot
     ax1.legend(bbox_to_anchor=(1.05, 1))
+    
+    if len(fname) > 0:
+        plt.savefig(fname+'.png')
+        fig.savefig(fname+'_backup.png')
+
 
 # plot learning rate history... assuming it's updated per iteration, not per episode. Otherwise you can just
 # use the two plotting methods above...
