@@ -56,6 +56,7 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
         img = env.render(mode="rgb_array")
     except:
         useVid = True # https://stackoverflow.com/a/51183488
+        print("Trying to use a video recording (unfinished)")
         env = wrappers.Monitor(env, "/tmp/ConsensusContEnv:ConsensusContEnv-v0")
     
     for e,f in enumerate(fnames):
