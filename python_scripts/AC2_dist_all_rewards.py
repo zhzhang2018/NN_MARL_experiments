@@ -161,8 +161,9 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
                log=False, num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
                fname='plots/'+taskname+'_Critic_loss')
 # Save models
+# The Agent object would assume there's a subfolder named "models/".
 for i,lab in enumerate(labels):
-    AC2_listv[i].save_model("models/"+taskname+'_'+lab)
+    AC2_listv[i].save_model(taskname+'_'+lab)
 
 # Maybe save screenshots of real testing
 for i,env_ in enumerate(env_listv):

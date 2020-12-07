@@ -160,8 +160,8 @@ def plot_reward_hist(reward_hists=[], ep_int=25, hist_names=[], log=True, num_it
     ax3.legend(bbox_to_anchor=(1.05, 1))
     
     if len(fname) > 0:
-        plt.savefig(fname+'.png')
-        fig.savefig(fname+'_backup.png')
+        plt.savefig(fname+'.png', bbox_inches='tight') # https://stackoverflow.com/a/42303455
+#         fig.savefig(fname+'_backup.png')
 
 # Plots out loss history data
 def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mode=UPDATE_PER_ITERATION, bar=True, fname=''):
@@ -201,8 +201,8 @@ def plot_loss_hist(hists=[], hist_names=[], log=True, num_iteration=0, update_mo
     ax1.legend(bbox_to_anchor=(1.05, 1))
     
     if len(fname) > 0:
-        plt.savefig(fname+'.png')
-        fig.savefig(fname+'_backup.png')
+        plt.savefig(fname+'.png', bbox_inches='tight')
+#         fig.savefig(fname+'_backup.png')
 
 
 # plot learning rate history... assuming it's updated per iteration, not per episode. Otherwise you can just
