@@ -6,6 +6,7 @@ from PIL import Image
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
+from gym import wrappers
 
 # Training modes
 UPDATE_PER_ITERATION = 0
@@ -54,7 +55,7 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
     try:
         img = env.render(mode="rgb_array")
     except:
-        useVid = True
+        useVid = True # https://stackoverflow.com/a/51183488
         env = wrappers.Monitor(env, "/tmp/ConsensusContEnv:ConsensusContEnv-v0")
     
     for e,f in enumerate(fnames):
