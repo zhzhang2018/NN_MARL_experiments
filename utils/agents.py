@@ -813,9 +813,9 @@ class AC3Agent(BaseAgent):
                 self.netA = ActionNetTF(N, prevN, load_pathA, ns, na*N, hidden, action_range, rand_mode=rand_modeA)
         else:
             if load_pathA is None:
-                self.netA = ActionNet(N, ns, na, hidden, action_range)
+                self.netA = ActionNet(N, ns, na, hidden, action_range, rand_mode=rand_modeA)
             else:
-                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range)
+                self.netA = ActionNetTF(N, prevN, load_pathA, ns, na, hidden, action_range, rand_mode=rand_modeA)
 
         if centralized:
             if load_pathC is None:
@@ -908,13 +908,16 @@ class AC3Agent(BaseAgent):
             pred_probs = torch.zeros(B)
             distrb = torch.distributions.Normal(
                 distrb_params[:,:self.na],
-                torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
+                nn.functional.softplus( distrb_params[:,self.na:] )
+#                 torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
             )
             # Need to keep action within limits
             pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
             pred_probs = distrb.log_prob(pred_action)
-
-            lossA = -( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ) * pred_probs
+            
+            # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
+            advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
+            lossA =  pred_probs * advantage
             lossA = lossA.mean()
 
 #         # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...
