@@ -37,7 +37,7 @@ class ConsensusContEnv(gym.Env):
 
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4, max_iter=200,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
-                 reward_mode=ALL_REWARD, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS):
+                 reward_mode=ALL_REWARD, uses_boundary=True, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
@@ -64,6 +64,7 @@ class ConsensusContEnv(gym.Env):
 
         self.input_type = input_type
         self.observe_type = observe_type
+        self.uses_boundary = uses_boundary
         self.boundary_policy = boundary_policy
         self.finish_reward_policy = finish_reward_policy
 
@@ -197,14 +198,19 @@ class ConsensusContEnv(gym.Env):
         # self.state is a NSxN array containing locations.
         # What we do want is a diff vector storing all relative positions to return as state - shape (N, NS, N).
         #     This broadcasting can be done by using shape (N,NS,1) tensor minus shape (1,NS,N) tensor.
-        diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
+        ### HOLD UP: Why is this following line using un-updated states???????
+        # diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
+        diff = temp_state.T.reshape((self.N,self.ns,1)) - temp_state.reshape((1,self.ns,self.N))
         diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
         diff_norm_unclipped = diff_norm
 
         # Check if it's ended / deserves to end by verifying distances between agents
         ### TODO: Proposal to make "done" criterion include near-zero speed and acceleration 
-        done = (diff_norm <= self.Delta).all() and (np.abs(self.state[2:4]) <= self.done_v_lim).all()
-        done = done and (np.abs(self.state[4:]) <= self.done_a_lim).all()
+        ### HOLD UP: Why are the 2 following lines using un-updated states???????
+        # done = (diff_norm <= self.Delta).all() and (np.abs(self.state[2:4]) <= self.done_v_lim).all()
+        # done = done and (np.abs(self.state[4:]) <= self.done_a_lim).all()
+        done = (diff_norm <= self.Delta).all() and (np.abs(temp_state[2:4]) <= self.done_v_lim).all()
+        done = done and (np.abs(temp_state[4:]) <= self.done_a_lim).all()
         if done:
             # Only grant it as "done" if it has lasted long enough
             self.done_count += 1
@@ -219,27 +225,39 @@ class ConsensusContEnv(gym.Env):
             self.done_count = 0
         # print(done, self.done_count, self.done_thres)
 
-        # Modify the state so that each agent is bounded
-        self.state = temp_state
-        # Bound x and y
-        self.state[:2] = np.clip(self.state[:2], np.array([[self.boundaries[0],self.boundaries[2]]]).T,
-                                                 np.array([[self.boundaries[1],self.boundaries[3]]]).T)
-        # Bound vx and vy
-        self.state[2:4] = np.clip(self.state[2:4], -self.v_max, self.v_max)
-        # Bound ax and ay
-        self.state[4:] = np.clip(self.state[4:], -self.a_max, self.a_max)
+        if self.uses_boundary:
+            # Modify the state so that each agent is bounded
+            self.state = temp_state
+            # Bound x and y
+            self.state[:2] = np.clip(self.state[:2], np.array([[self.boundaries[0],self.boundaries[2]]]).T,
+                                                     np.array([[self.boundaries[1],self.boundaries[3]]]).T)
+            # Bound vx and vy
+            self.state[2:4] = np.clip(self.state[2:4], -self.v_max, self.v_max)
+            # Bound ax and ay
+            self.state[4:] = np.clip(self.state[4:], -self.a_max, self.a_max)
 
-        # This section would try to reduce the velocity when it would lead to out-of-bound at next step
-        self.state[4:] = np.minimum(self.state[4:], (self.v_max - self.state[2:4]) / self.dt)
-        self.state[4:] = np.maximum(self.state[4:], (-self.v_max - self.state[2:4]) / self.dt)
-        self.state[2:4] = np.minimum(self.state[2:4], 
-            (np.array([[self.boundaries[1],self.boundaries[3]]]).T - self.state[:2]) / self.dt)
-        self.state[2:4] = np.maximum(self.state[2:4], 
-            (np.array([[self.boundaries[0],self.boundaries[2]]]).T - self.state[:2]) / self.dt)
+            # This section would try to reduce the velocity when it would lead to out-of-bound at next step
+            self.state[4:] = np.minimum(self.state[4:], (self.v_max - self.state[2:4]) / self.dt)
+            self.state[4:] = np.maximum(self.state[4:], (-self.v_max - self.state[2:4]) / self.dt)
+            self.state[2:4] = np.minimum(self.state[2:4], 
+                (np.array([[self.boundaries[1],self.boundaries[3]]]).T - self.state[:2]) / self.dt)
+            self.state[2:4] = np.maximum(self.state[2:4], 
+                (np.array([[self.boundaries[0],self.boundaries[2]]]).T - self.state[:2]) / self.dt)
 
-        # Re-calculate distance
-        diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
-        diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
+            # Re-calculate distance
+            diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
+            diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
+        else:
+            # Don't need to recalculate distances, but need to shift the agents back to the center if needed.
+            # Current method: Fixate the first agent to the center of the environment, and move all other agents'
+            # positions based on that. Effectively leader-follower without the leader knowing that it's the leader.
+            # Should work as long as nothing in the process (observation, reward, etc) is absolute-position-based.
+            offset = self.state[:2,0]
+            self.state[:2] = self.state[:2] - offset
+            # if out_of_bound.all():
+            #     # Don't do anything if everything's within bound
+            #     pass
+            # else:
 
         # Then we want a reward as a list.
         # If we want it as a tensor, then it's better to offload it to a separate function.
@@ -346,6 +364,16 @@ class ConsensusContEnv(gym.Env):
             if action is None:
                 action = np.zeros((self.na,self.N))
             obsvs = np.concatenate((obsvs, self.filter_neighbor_actions(action)),axis=1)
+
+        # Attach nonlinearities
+        nonlinfeats = np.zeros((self.N,len(self.additional_features), self.N))
+        for i,feat in enumerate(self.additional_features):
+            try:
+                nonlinfeats[:,i,:] = feat(obsvs)
+            except:
+                pass
+        obsvs = np.concatenate((obsvs, nonlinfeats), axis=1)
+
         # For each observed parameter, make an identity matrix of the right shape, and slap it onto obsvs
         idmatrix = np.eye(self.N).reshape(self.N,1,self.N)
         obsvs = np.concatenate((

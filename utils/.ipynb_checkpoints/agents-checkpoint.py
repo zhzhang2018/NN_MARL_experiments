@@ -723,7 +723,7 @@ class AC2Agent(BaseAgent):
             pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
             pred_probs = distrb.log_prob(pred_action)
 
-            ### !!!!!!! THE CORRECT ACTOR_CRITIC SHOULD USE THE ADVANTAGE, NOT THE REWARD !!!!!!!! FIX THIS
+            ### !!!!!!! THE CORRECT ACTOR_CRITIC SHOULD USE THE ADVANTAGE, NOT THE REWARD !!!!!!!! FIXING THIS WITH AC3Agent
             ## Problem with the above is that our Critic needs action as part of the input, and we might have
             ## issue accessing the next state's reward (actual or predicted).
             lossA = self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_probs
@@ -917,7 +917,7 @@ class AC3Agent(BaseAgent):
             
             # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
-            lossA =  pred_probs * advantage
+            lossA = - pred_probs * advantage
             lossA = lossA.mean()
 
 #         # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...

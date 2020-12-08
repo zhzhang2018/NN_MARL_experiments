@@ -140,12 +140,12 @@ for i,env_ in enumerate(env_listv):
     print("Finished training env with {0} agents for AC".format(env_.N))
 
 AC2_test_histv = []
-for i,env_ in enumerate(env_listv):
-    AC2_test_histv.append(
-        plot_test(AC2_listv[i], env_, fnames=['']*num_test,
-            num_iteration=num_iteration, action_space=action_space, imdir='plots/',debug=debug)
-    )
-    print("Finished testnig env with {0} agents for AC".format(env_.N))
+# for i,env_ in enumerate(env_listv):
+#     AC2_test_histv.append(
+#         plot_test(AC2_listv[i], env_, fnames=['']*num_test,
+#             num_iteration=num_iteration, action_space=action_space, imdir='plots/',debug=debug)
+#     )
+#     print("Finished testnig env with {0} agents for AC".format(env_.N))
 
 # Plot performance histories
 skip = 1
