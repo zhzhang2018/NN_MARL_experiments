@@ -119,7 +119,7 @@ labels = [taskname+labels[i]+'_N{0}'.format(env_.N) for i,env_ in enumerate(env_
 AC2_listv = []
 for i,env_ in enumerate(env_listv):
     AC2_listv.append(
-        AC2Agent(device, env_.N, env_.nf, env_.na, hidden, rand_modeA=rand_mode,
+        AC3Agent(device, env_.N, env_.nf, env_.na, hidden, rand_modeA=rand_mode,
                  learning_rateA=0.01, learning_rateC=0.02, mode=mode)
     )
 
