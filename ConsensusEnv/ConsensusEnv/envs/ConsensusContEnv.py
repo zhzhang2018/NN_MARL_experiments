@@ -252,7 +252,7 @@ class ConsensusContEnv(gym.Env):
             # Current method: Fixate the first agent to the center of the environment, and move all other agents'
             # positions based on that. Effectively leader-follower without the leader knowing that it's the leader.
             # Should work as long as nothing in the process (observation, reward, etc) is absolute-position-based.
-            offset = self.state[:2,0]
+            offset = self.state[:2,[0]]
             self.state[:2] = self.state[:2] - offset
             # if out_of_bound.all():
             #     # Don't do anything if everything's within bound

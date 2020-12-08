@@ -609,10 +609,11 @@ class AC1Agent(BaseAgent):
 # Actor-Critic attempt #2
 # Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
 #             Directly updates Reward based on state and action without considering the future.
+# The argument "mode" indicates which version of AC2 is implemented. If using any of them, please use non-cumulative rewards.
 class AC2Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
-                 prevN=10, load_pathA=None, load_pathC=None):
+                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98):
         super().__init__(device, N)
         self.noise = add_noise
         self.centralized = centralized
@@ -620,7 +621,7 @@ class AC2Agent(BaseAgent):
         self.rand_modeA = rand_modeA
         self.action_range = action_range
         
-        # Load models
+        # Load models for transfer learning. If you just want to use an existing model and see results, consider self.load_models().
         if load_pathA is None:
             self.netA = ActionNet(N, ns, na, hidden, action_range, rand_mode=rand_modeA)
         else:
@@ -635,6 +636,8 @@ class AC2Agent(BaseAgent):
         self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
         self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.na = na
+        self.mode = mode
+        self.gamma = gamma
         self.name = 'AC2Agent'
         
     # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
@@ -653,6 +656,7 @@ class AC2Agent(BaseAgent):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
         state_batch = torch.cat(batch.state)
+        next_state_batch = torch.cat(batch.next_state)
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
@@ -660,7 +664,18 @@ class AC2Agent(BaseAgent):
         self.netC.train() # Critic and value predictions
         self.optimizerC.zero_grad()
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
-        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        if self.mode == 1208:
+            # Calculate Q_c( s(t+1), a(t+1) )
+            next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
+            lossC = torch.nn.functional.mse_loss(reward_batch.squeeze(), next_pred_reward * self.gamma - pred_reward)
+        elif self.mode == 1209:
+            # Calculate Q_c( s(t+1), a(t+1) )
+            next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
+            lossC = reward_batch.squeeze() - (next_pred_reward * self.gamma - pred_reward)
+            lossC *= pred_reward
+            lossC = torch.abs(lossC).mean()
+        else:
+            lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
 #         print("Critic loss: ", lossC)
         lossC.backward()
 #         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
@@ -794,10 +809,12 @@ class AC2Agent(BaseAgent):
 #    - Another problem with this: The Critic also needs action to output a value. Should I change the network??
 # https://github.com/nikhilbarhate99/Actor-Critic-PyTorch/blob/01c833e83006be5762151a29f0719cc9c03c204d/model.py#L33
 # http://rail.eecs.berkeley.edu/deeprlcourse-fa17/f17docs/lecture_5_actor_critic_pdf.pdf
+# The argument "mode" is here to implement different update functions. When using them, it might be advised to train with
+# normalized but non-cumulative rewards.
 class AC3Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False,
-                 prevN=10, load_pathA=None, load_pathC=None):
+                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98):
         super().__init__(device, N)
         self.noise = add_noise
         self.centralized = centralized
@@ -834,6 +851,8 @@ class AC3Agent(BaseAgent):
         self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
         self.ns = ns
         self.na = na
+        self.mode = mode
+        self.gamma = gamma
         self.name = 'AC3Agent'
         
     # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
@@ -900,10 +919,14 @@ class AC3Agent(BaseAgent):
                 # Add Gaussian noise. 
                 stddev = 0.1
                 added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+            # Modify later
             lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
         elif self.rand_modeA == GAUSS_RAND:
             # TODO: Add centralized differentiations later
-            distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
+            if self.mode != 1204:
+                distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
+            else:
+                distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
             pred_action = torch.zeros(B,self.na)
             pred_probs = torch.zeros(B)
             distrb = torch.distributions.Normal(
@@ -916,8 +939,28 @@ class AC3Agent(BaseAgent):
             pred_probs = distrb.log_prob(pred_action)
             
             # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
-            advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
-            lossA = - pred_probs * advantage
+#             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
+            if self.mode == 1208:
+                pred_probs = distrb.log_prob(action_batch)
+                advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                      pred_action).squeeze() - self.netC(next_state_batch.view(B, -1, self.N), 
+                                                                         torch.zeros_like(pred_action)).squeeze()
+            elif self.mode == 1205:
+                advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - reward_batch
+            elif self.mode == 1204:
+                advantage = self.netC(next_state_batch.view(B, -1, self.N), 
+                                      pred_action).squeeze() + reward_batch - self.netC(state_batch.view(B, -1, self.N), 
+                                                                                        action_batch).squeeze()
+            elif self.mode == 0:
+                # Idea: The first term is the expected value of the current action.
+                #       The latter two terms sums up to the the (hopefully accurate) expected value of previous action. 
+                advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                      pred_action).squeeze() - reward_batch - self.netC(next_state_batch.view(B, -1, self.N), 
+                                                                                        torch.zeros_like(pred_action)).squeeze()*self.gamma
+            else:
+                # Legacy update rule used by experiments prior to 1208 (at least)
+                advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - reward_batch
+            lossA = - pred_probs * advantage.unsqueeze(1)
             lossA = lossA.mean()
 
 #         # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...

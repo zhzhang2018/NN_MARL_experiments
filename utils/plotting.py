@@ -47,17 +47,17 @@ def run_expert(env, num_iteration=200, seed=2020):
     return reward_hist_hst
 
 # Randomly give a test
-def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imdir='', debug=True):
+def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imdir='', debug=True, useVid=False):
     reward_hist_hst = []
     N=env.N
     
-    useVid = False
-    try:
-        img = env.render(mode="rgb_array")
-    except:
-        useVid = True # https://stackoverflow.com/a/51183488
-        print("Trying to use a video recording (unfinished)")
-        env = wrappers.Monitor(env, "/tmp/ConsensusContEnv:ConsensusContEnv-v0")
+    if not(useVid):
+        try:
+            img = env.render(mode="rgb_array")
+        except:
+            useVid = True # https://stackoverflow.com/a/51183488
+            print("Trying to use a video recording (unfinished)")
+            env = wrappers.Monitor(env, "/tmp/ConsensusContEnv:ConsensusContEnv-v0")#, video_callable=False)
     
     for e,f in enumerate(fnames):
         steps = 0

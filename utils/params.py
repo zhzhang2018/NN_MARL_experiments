@@ -1,3 +1,4 @@
+# Stores macro parameters for environment
 U_VELOCITY = 1
 U_ACCELERATION = 2
 O_VELOCITY = 1

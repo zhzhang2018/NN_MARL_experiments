@@ -1,6 +1,7 @@
 from utils.networks import *
 from utils.ReplayMemory import *
 from utils.agents import *
+from utils.plotting import plot_test
 import math
 import torch
 import random
@@ -17,14 +18,16 @@ from datetime import datetime
 UPDATE_PER_ITERATION = 0
 UPDATE_PER_EPISODE = 1
 UPDATE_ON_POLICY = 2
-FUTURE_REWARD_YES = 0
-FUTURE_REWARD_NO = 1
-FUTURE_REWARD_YES_NORMALIZE = 2
+FUTURE_REWARD_YES = 0x1
+FUTURE_REWARD_NO = 0x0
+FUTURE_REWARD_YES_NORMALIZE = 0x3
+FUTURE_REWARD_NORMALIZE = 0x2
 
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
           update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99, 
-          loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[]):
+          loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[],
+          save_sim_intv=50, save_sim_fnames=[], imdir='screencaps/', useVid=False):
     test_hists = []
     steps = 0
     if memory is None:
@@ -88,7 +91,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 action = actions.T # Shape should already be (2,N), so we turn it into (N,2)
             
             if not(agent.centralized):
-                if reward_mode == FUTURE_REWARD_NO:
+                if reward_mode & FUTURE_REWARD_YES == 0:
                     # Push everything directly inside if we don't use future discounts
                     for i in range(N):
                         memory.push(state[i], action[i], next_state[i], reward[i])
@@ -101,7 +104,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             else:
                 # Centralized training should directly use the real states, instead of observations
                 reward = np.sum(reward)
-                if reward_mode == FUTURE_REWARD_NO:
+                if reward_mode & FUTURE_REWARD_YES == 0:
                     # Push everything directly inside if we don't use future discounts
                     memory.push(state, action, env.state, reward)
                 else:
@@ -156,11 +159,11 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Took ", t, " steps to converge")
                 break
         
-        if reward_mode == FUTURE_REWARD_YES or reward_mode == FUTURE_REWARD_YES_NORMALIZE:
+        if reward_mode & FUTURE_REWARD_YES == 1:
             for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
                 if j > 0:
                     reward_pool[-j-1] += gamma * reward_pool[-j]
-            if reward_mode == FUTURE_REWARD_YES_NORMALIZE:
+            if reward_mode & FUTURE_REWARD_NORMALIZE == 1:
                 reward_pool = torch.tensor(reward_pool)
                 reward_pool = (reward_pool - reward_pool.mean()) / reward_pool.std()
             
@@ -210,9 +213,20 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             test_hist = test(agent, env, num_test, num_iteration, num_sample, action_space, 
                              seed=test_seeds[int(e/test_interval)], debug=debug)
             test_hists.append(test_hist)
-    env.close()
+        
+        # Save demos of simulation if wanted
+        if e % save_sim_intv == (save_sim_intv-1) and e > 0:
+            try:
+                fnames = [f+'_{0}'.format(e) for f in save_sim_fnames]
+                plot_test(agent, env, fnames=fnames,
+                    num_iteration=num_iteration, action_space=action_space, imdir=imdir,
+                    debug=debug, useVid=useVid)
+                for f in fnames:
+                    os.system('ffmpeg -y -pattern_type glob -i "'+imdir+f+'*.jpg" '+f+'.gif')
+            except:
+                print("Failed to save simulation at e={0}".format(e))
     return test_hists
-
+                
 def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020, debug=True):
     reward_hist_hst = []
     N=env.N

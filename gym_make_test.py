@@ -36,7 +36,7 @@ END_ON_CONSENSUS = 0
 REWARD_IF_CONSENSUS = 1 # Doesn't stop, but keeps giving positive reward when seen as achieved consensus
 
 env = gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N, dt=0.1, Delta=0.05,
-              input_type=U_ACCELERATION, observe_type=O_VELOCITY, 
+              input_type=U_ACCELERATION, observe_type=O_VELOCITY, uses_boundary=False,
               boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS).unwrapped
 # env = gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N, dt=0.1, Delta=0.05,
 #               input_type=U_VELOCITY, observe_type=O_VELOCITY).unwrapped
