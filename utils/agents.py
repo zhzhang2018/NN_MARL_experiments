@@ -667,10 +667,13 @@ class AC2Agent(BaseAgent):
         if self.mode == 1208:
             # Calculate Q_c( s(t+1), a(t+1) )
             next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
-            lossC = torch.nn.functional.mse_loss(reward_batch.squeeze(), next_pred_reward * self.gamma - pred_reward)
+#             lossC = torch.nn.functional.mse_loss(reward_batch.squeeze(), next_pred_reward * self.gamma - pred_reward)
+            lossC = torch.nn.functional.mse_loss(reward_batch.unsqueeze(1), next_pred_reward * self.gamma - pred_reward)
+#             print(next_pred_reward.shape, pred_reward.shape, reward_batch.shape, lossC.shape)
         elif self.mode == 1209:
-            # Calculate Q_c( s(t+1), a(t+1) )
+            # Calculate Q_c( s(t+1), a(t+1) ).
             next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
+            # Find loss. Not sure if the squeeze() placements below are correct...
             lossC = reward_batch.squeeze() - (next_pred_reward * self.gamma - pred_reward)
             lossC *= pred_reward
             lossC = torch.abs(lossC).mean()

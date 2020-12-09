@@ -37,7 +37,8 @@ class ConsensusContEnv(gym.Env):
 
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4, max_iter=200,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
-                 reward_mode=ALL_REWARD, uses_boundary=True, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS):
+                 reward_mode=ALL_REWARD, uses_boundary=True, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS,
+                 start_radius=0.5):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
@@ -76,8 +77,21 @@ class ConsensusContEnv(gym.Env):
         self.boundaries = boundaries
         self.worldW = boundaries[1]-boundaries[0]
         self.worldH = boundaries[3]-boundaries[2]
-        self.o_radius = min(o_radius, self.worldW, self.worldH) # Receiver radius
+        self.o_radius = o_radius
+        self.start_radius = min(o_radius, self.worldW, self.worldH) # Receiver radius
         
+        # Parameters (weights) for loss terms
+        self.sod_w = 400 # Sum-of-distance weight
+        self.nos_w = 0.1 # Number-of-steps weight
+        self.nos_base = 1.05 # Number-of-steps base weight, if needed
+        self.mov_w = 5 # Magnitude-of-velocity weight
+        self.oob_reward = 10 # Deduct this value for out-of-bound agents.
+        # Decide the penalty value according to the boundary policy. We'll deal with the DEAD_ON_ARRIVAL policy later.
+        if self.boundary_policy == NO_PENALTY:
+            self.oob_reward = 0
+        elif self.boundary_policy == HARD_PENALTY or self.boundary_policy == DEAD_ON_TOUCH:
+            self.oob_reward = 100
+
         # Define the type and shape of action_space and observation_space. 
         # Here let's just assume the velocity bounds for x and y are both [-1,1].
         # (Hint: Even when imposing this constraint, you might still have to clamp down network outputs,
@@ -96,7 +110,8 @@ class ConsensusContEnv(gym.Env):
         # Initialize state space
         self.state = np.random.rand(self.ns, self.N)
         # # Randomize initial positions
-        self.state[:2,:] = self.state[:2,:] * self.o_radius * 2 - self.o_radius
+        self.state[:2,:] = self.state[:2,:] * self.start_radius * 2 - self.start_radius
+        # self.state[:2,:] = self.state[:2,:] * self.o_radius * 2 - self.o_radius
         # self.state[:2,:] = self.state[:2,:] * np.array([[self.worldW], 
         #                                                 [self.worldH]]) + np.array([[boundaries[0]], 
         #                                                                             [boundaries[2]]])
@@ -183,13 +198,7 @@ class ConsensusContEnv(gym.Env):
         out_of_bound = self.is_in_bound(temp_state)
         
         # Find reward via summed total distance for each agent. 
-        oob_reward = 10 # Deduct this value for out-of-bound agents.
-        # Decide the penalty value according to the boundary policy. We'll deal with the DEAD_ON_ARRIVAL policy later.
-        if self.boundary_policy == NO_PENALTY:
-            oob_reward = 0
-        elif self.boundary_policy == HARD_PENALTY or self.boundary_policy == DEAD_ON_TOUCH:
-            oob_reward = 100000
-        rewards = (out_of_bound - 1) * oob_reward # shape = (N,)
+        rewards = (out_of_bound - 1) * self.oob_reward # shape = (N,)
         # Because out_of_bound is 0 for out-of-bound ones, and 1 for ones staying inside, the (out_of_bound-1) term
         # would be -1 for bad agents and 0 for good agents. Thus, out-of-bound agents get negative reward for being bad.
 
@@ -298,11 +307,11 @@ class ConsensusContEnv(gym.Env):
             rewards = np.zeros((self.N,))
         # print(rewards)
 
-        # Parameters (weights) for loss terms
-        sod_w = 4
-        nos_w = 0.1
-        nos_base = 1.05
-        mov_w = 5
+        sod_w = self.sod_w
+        nos_w = self.nos_w
+        nos_base = self.nos_base
+        mov_w = self.mov_w
+
         if self.input_type == U_ACCELERATION:
             mov_w *= (self.v_max / self.a_max)
 
@@ -325,7 +334,8 @@ class ConsensusContEnv(gym.Env):
         if self.reward_mode & TIME_REWARD:
             # rewards -= nos * nos_w
             # rewards -= pow(nos_base, nos) * nos_w
-            rewards -= nos*nos*nos_w
+            # rewards -= nos*nos*nos_w
+            rewards -= nos*nos_w
 
         # Next, we could constrain the input size, be it velocity or acceleration.
         # If we're using acceleration, it might be better to downscale this thing, because accelerations' values are larger
@@ -396,7 +406,8 @@ class ConsensusContEnv(gym.Env):
         # Initialize state space
         self.state = np.random.rand(self.ns, self.N)
         # Randomize initial positions
-        self.state[:2,:] = self.state[:2,:] * self.o_radius * 2 - self.o_radius
+        self.state[:2,:] = self.state[:2,:] * self.start_radius * 2 - self.start_radius
+        # self.state[:2,:] = self.state[:2,:] * self.o_radius * 2 - self.o_radius
         # self.state[:2,:] = self.state[:2,:] * np.array([[self.worldW], 
         #                                                 [self.worldH]]) + np.array([[self.boundaries[0]], 
         #                                                                             [self.boundaries[2]]])
