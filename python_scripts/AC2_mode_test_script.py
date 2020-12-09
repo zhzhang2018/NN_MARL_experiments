@@ -113,7 +113,9 @@ for N_ in N_listv:
 
 if not uses_boundary:
     taskname += '_fixed0'
-taskname += '_m{0}'.format(mode)
+else:
+    taskname += '_bounded'
+taskname += '_m{0}_'.format(mode)
 labels = ['hard_bound_zero_posReward', 
           'dead_bound_zero_posReward', 
           'hard_bound_cumu_posReward', 
