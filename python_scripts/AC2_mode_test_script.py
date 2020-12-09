@@ -37,6 +37,7 @@ mode = input("Mode number: ")
 mode = int(mode)
 uses_boundary = input("Uses boundary? y/n")
 uses_boundary = (uses_boundary == 'y')
+# complete_graph = input("Always keep complete graph? y/n")
 
 # if gpu is to be used
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

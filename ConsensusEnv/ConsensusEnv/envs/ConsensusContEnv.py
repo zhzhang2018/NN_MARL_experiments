@@ -91,6 +91,7 @@ class ConsensusContEnv(gym.Env):
             self.oob_reward = 0
         elif self.boundary_policy == HARD_PENALTY or self.boundary_policy == DEAD_ON_TOUCH:
             self.oob_reward = 100
+        self.aoob_reward = 100 * self.oob_reward # All-out-of-bound
 
         # Define the type and shape of action_space and observation_space. 
         # Here let's just assume the velocity bounds for x and y are both [-1,1].
@@ -294,10 +295,10 @@ class ConsensusContEnv(gym.Env):
         # Early termination if using strict boundary policy
         if self.boundary_policy == DEAD_ON_TOUCH and (out_of_bound == 0).any():
             done = True
-            rewards += (out_of_bound - 1) * oob_reward * 100
+            rewards += (out_of_bound - 1) * self.aoob_reward 
         elif self.boundary_policy == HARD_PENALTY and (out_of_bound == 0).all():
             done = True
-            rewards += (out_of_bound - 1) * oob_reward * 100
+            rewards += (out_of_bound - 1) * self.aoob_reward 
         return state_observs, rewards, done, {}
     
     def find_rewards(self, diff, action, rewards=None):
