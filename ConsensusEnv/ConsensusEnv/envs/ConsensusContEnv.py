@@ -38,7 +38,7 @@ class ConsensusContEnv(gym.Env):
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4, max_iter=200,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
                  reward_mode=ALL_REWARD, uses_boundary=True, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS,
-                 start_radius=0.5):
+                 start_radius=0.5, dist_reward_func=None):
         super(ConsensusContEnv, self).__init__()
         
         # Store necessary info for us to simulate the environment successfully
@@ -78,7 +78,7 @@ class ConsensusContEnv(gym.Env):
         self.worldW = boundaries[1]-boundaries[0]
         self.worldH = boundaries[3]-boundaries[2]
         self.o_radius = o_radius
-        self.start_radius = min(o_radius, self.worldW, self.worldH) # Receiver radius
+        self.start_radius = min(o_radius, self.worldW/2, self.worldH/2) # Receiver radius
         
         # Parameters (weights) for loss terms
         self.sod_w = 400 # Sum-of-distance weight
@@ -92,6 +92,13 @@ class ConsensusContEnv(gym.Env):
         elif self.boundary_policy == HARD_PENALTY or self.boundary_policy == DEAD_ON_TOUCH:
             self.oob_reward = 100
         self.aoob_reward = 100 * self.oob_reward # All-out-of-bound
+        # Define distance reward...
+        # This function would be applied elementwise to each pairwise distance before being summed up.
+        # Wait for a future version if you want to do manipulation on the summed up distances as well. 
+        if dist_reward_func is None:
+            self.dist_reward_func = lambda x : x
+        else:
+            self.dist_reward_func = dist_reward_func
 
         # Define the type and shape of action_space and observation_space. 
         # Here let's just assume the velocity bounds for x and y are both [-1,1].
@@ -287,7 +294,7 @@ class ConsensusContEnv(gym.Env):
         diff = diff * self.Adj.reshape((self.N,1,self.N))
 
         # Take the rows that can be observed as output
-        state_observs = self.attach_nonlin_features(diff[:,:self.no,:], action)
+        state_observs = self.attach_nonlin_features(diff[:,:self.no,:], action, temp_state)
 
         # Return: Observation, reward, done or not, ???
         self.step_count += 1
@@ -320,7 +327,7 @@ class ConsensusContEnv(gym.Env):
         # The inner call turns diff into a 2D array full of x distances.
         # The outer call sums the distances up for each agent. Sum_of_distances
         # sod = np.sum( np.linalg.norm(diff[:,:2,:], ord=2, axis=1), axis=1 )
-        sod = np.sum(diff, axis=1)
+        sod = np.sum(self.dist_reward_func(diff), axis=1)
         # if self.reward_mode == DIST_REWARD or self.reward_mode == ALL_REWARD:
         if self.reward_mode & DIST_REWARD:
             rewards -= sod * sod_w
@@ -362,7 +369,7 @@ class ConsensusContEnv(gym.Env):
             return np.clip(acc_control, -self.a_max, self.a_max)
     
     ### TODO: Attach nonlinear features behind state_observs
-    def attach_nonlin_features(self, obsvs, action=None):
+    def attach_nonlin_features(self, obsvs, action=None, temp_state=None):
         # Input shape: obsvs (N, no, N); i.e. each agent's entire observation, all stacked together.
         ### TODO: Attach nonlinear features here.
         # Currently, the output stacks the observed neighbor actions (for the previous time) after the observations.
@@ -376,11 +383,15 @@ class ConsensusContEnv(gym.Env):
                 action = np.zeros((self.na,self.N))
             obsvs = np.concatenate((obsvs, self.filter_neighbor_actions(action)),axis=1)
 
+        # Attach stuff that uses actual state if needed
+        if temp_state is None:
+            temp_state = self.state
+
         # Attach nonlinearities
         nonlinfeats = np.zeros((self.N,len(self.additional_features), self.N))
         for i,feat in enumerate(self.additional_features):
             try:
-                nonlinfeats[:,i,:] = feat(obsvs)
+                nonlinfeats[:,i,:] = feat(obsvs, temp_state)
             except:
                 pass
         obsvs = np.concatenate((obsvs, nonlinfeats), axis=1)
@@ -397,7 +408,8 @@ class ConsensusContEnv(gym.Env):
         # Input shape: action (self.na,N) is an array recording all agents' actions at some point.
         # Output shape: (N,self.na,N) array where the input is filtered according to adjacency matrix.
         # You can also use this method to obtain broadcasted actioini plan.
-        # self.Adj has shape (N,N). Need to add diagonal 1s because agent should be able to see its own actions
+        # self.Adj has shape (N,N). Need to add diagonal 1s because agent should be able to see its own actions.
+        ### TODO: Check if this multiplication makes sense. Should it be a matmul??
         return (self.Adj + np.eye(self.N)).reshape(self.N,1,self.N) * action
 
     def reset(self):
