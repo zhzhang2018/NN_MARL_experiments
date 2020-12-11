@@ -48,11 +48,11 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=750#500
+num_episode=7#50#500
 test_interval=10#0
 num_test=10#50
-num_iteration=200
-BATCH_SIZE=256#64#128
+num_iteration=2#00
+BATCH_SIZE=2#56#64#128
 save_sim_intv=50
 debug=False
 num_sample=50
@@ -69,28 +69,60 @@ if N == 0:
     print("Using default N")
 env_listv = []
 for N_ in N_listv:
-    # Distance-based reward only, with hard penalty on touching the boundary.
-    # Control group that doesn't give surviving reward, and instead stops immediately.
+    # # Distance-based reward only, with hard penalty on touching the boundary.
+    # # Control group that doesn't give surviving reward, and instead stops immediately.
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # # Drop-dead immediately on touching the boundary
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD,
+    #              boundary_policy=DEAD_ON_TOUCH, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # # Hard penalty on boundary, coupled with positive convergence reward. This means it never stops on consensus.
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
+    #              finish_reward_policy=REWARD_IF_CONSENSUS, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # log reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.log(np.abs(x)+1)),
+#                  dist_reward_func=lambda x : (np.sqrt(x) * 2),
+#                  dist_reward_func=lambda x : (np.abs(x) + 2) * (np.abs(x) + 2),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
-    # Drop-dead immediately on touching the boundary
+    # square root reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD,
-                 boundary_policy=DEAD_ON_TOUCH, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.sqrt(x) * 2),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
-    # Hard penalty on boundary, coupled with positive convergence reward. This means it never stops on consensus.
+    # shifted quadratic reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
-                 finish_reward_policy=REWARD_IF_CONSENSUS, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.abs(x) + 2) * (np.abs(x) + 2),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
     # Soft penalty with consensus rewards. I don't expect it to successfully discover
@@ -110,15 +142,16 @@ for N_ in N_listv:
                  uses_boundary=uses_boundary
         ).unwrapped
     )
+    env_listv[-1].mov_w = 100
 
 if not uses_boundary:
     taskname += '_fixed0'
 else:
     taskname += '_bounded'
 taskname += '_m{0}_'.format(mode)
-labels = ['hard_bound_zero_posReward', 
-          'dead_bound_zero_posReward', 
-          'hard_bound_cumu_posReward', 
+labels = ['log_reward', # 'hard_bound_zero_posReward', 
+          'sqrt_reward', # 'dead_bound_zero_posReward', 
+          'squareshift_reward', # 'hard_bound_cumu_posReward', 
           'soft_bound_cumu_posReward', 
           'hard_bound_zero_posReward_v_penalty']*len(N_listv)
 labels = [taskname+labels[i]+'_N{0}'.format(env_.N) for i,env_ in enumerate(env_listv)]
@@ -132,19 +165,31 @@ for i,env_ in enumerate(env_listv):
 
 AC2_histv = []
 AC2_lossv = []
+memory_lane = []
 for i,env_ in enumerate(env_listv):
     # AC2_listv[i].optimizerA.learning_rate = 0.1
     # AC2_listv[i].optimizerC.learning_rate = 0.1
     AC2_lossv.append([])
-    AC2_histv.append(
-        train(AC2_listv[i], env_, 
+    # Not using memory: 
+    # AC2_histv.append(
+    #     train(AC2_listv[i], env_, 
+    #           num_episode=num_episode, test_interval=test_interval, num_test=num_test, num_iteration=num_iteration, 
+    #           BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug,
+    #           update_mode=UPDATE_PER_EPISODE, reward_mode=FUTURE_REWARD_YES|FUTURE_REWARD_NORMALIZE, 
+    #           loss_history=AC2_lossv[i],
+    #           save_sim_intv=save_sim_intv, save_sim_fnames=[labels[i]], 
+    #           imdir='screencaps/', save_intm_models=True)
+    # )
+    # Using memory:
+    h1,h2 = train(AC2_listv[i], env_, 
               num_episode=num_episode, test_interval=test_interval, num_test=num_test, num_iteration=num_iteration, 
               BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug,
               update_mode=UPDATE_PER_EPISODE, reward_mode=FUTURE_REWARD_YES|FUTURE_REWARD_NORMALIZE, 
               loss_history=AC2_lossv[i],
               save_sim_intv=save_sim_intv, save_sim_fnames=[labels[i]], 
-              imdir='screencaps/', save_intm_models=True)
-    )
+              imdir='screencaps/', save_intm_models=True, return_memory=True)
+    AC2_histv.append(h1)
+    memory_lane.append(h2)
     print("Finished training env with {0} agents for AC".format(env_.N))
 
 AC2_test_histv = []
@@ -166,36 +211,68 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
 # The Agent object would assume there's a subfolder named "models/".
 for i,lab in enumerate(labels):
     AC2_listv[i].save_model(taskname+'_'+lab)
+    # If using memory:
+    torch.save( Transition(*zip(*.memory_lane[i]memory)), taskname+'_'+lab+'_memory' )
 
 print("Finished running "+taskname)
 print("Trying to generate screenshots now...")
 
 print("Trying to run with the reversed uses_boundary input")
-uses_boundary = not uses_boundary
+# uses_boundary = not uses_boundary
 env_listv = []
 for N_ in N_listv:
-    # Distance-based reward only, with hard penalty on touching the boundary.
-    # Control group that doesn't give surviving reward, and instead stops immediately.
+    # # Distance-based reward only, with hard penalty on touching the boundary.
+    # # Control group that doesn't give surviving reward, and instead stops immediately.
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # # Drop-dead immediately on touching the boundary
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD,
+    #              boundary_policy=DEAD_ON_TOUCH, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # # Hard penalty on boundary, coupled with positive convergence reward. This means it never stops on consensus.
+    # env_listv.append(
+    #     gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
+    #           input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
+    #              finish_reward_policy=REWARD_IF_CONSENSUS, 
+    #              uses_boundary=uses_boundary
+    #     ).unwrapped
+    # )
+    # log reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.log(np.abs(x)+1)),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
-    # Drop-dead immediately on touching the boundary
+    # square root reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD,
-                 boundary_policy=DEAD_ON_TOUCH, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.sqrt(x) * 2),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
-    # Hard penalty on boundary, coupled with positive convergence reward. This means it never stops on consensus.
+    # shifted quadratic reward
     env_listv.append(
-        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05,
-              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, reward_mode=DIST_REWARD, 
-                 finish_reward_policy=REWARD_IF_CONSENSUS, 
-                 uses_boundary=uses_boundary
+        gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
+              input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
+                 reward_mode=DIST_REWARD,#|ACT_REWARD,
+                 uses_boundary=uses_boundary,
+                 dist_reward_func=lambda x : (np.abs(x) + 2) * (np.abs(x) + 2),
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
     # Soft penalty with consensus rewards. I don't expect it to successfully discover
@@ -215,15 +292,17 @@ for N_ in N_listv:
                  uses_boundary=uses_boundary
         ).unwrapped
     )
-taskname = failename
+    env_listv[-1].mov_w = 100
+taskname = failename+'_K_'
+# taskname = failename
 if not uses_boundary:
     taskname += '_fixed0'
 else:
     taskname += '_bounded'
-taskname += '_m{0}'.format(mode)
-labels = ['hard_bound_zero_posReward', 
-          'dead_bound_zero_posReward', 
-          'hard_bound_cumu_posReward', 
+taskname += '_m{0}_'.format(mode)
+labels = ['log_reward', # 'hard_bound_zero_posReward', 
+          'sqrt_reward', # 'dead_bound_zero_posReward', 
+          'squareshift_reward', # 'hard_bound_cumu_posReward', 
           'soft_bound_cumu_posReward', 
           'hard_bound_zero_posReward_v_penalty']*len(N_listv)
 labels = [taskname+labels[i]+'_N{0}'.format(env_.N) for i,env_ in enumerate(env_listv)]
@@ -241,15 +320,26 @@ for i,env_ in enumerate(env_listv):
     # AC2_listv[i].optimizerA.learning_rate = 0.1
     # AC2_listv[i].optimizerC.learning_rate = 0.1
     AC2_lossv.append([])
-    AC2_histv.append(
-        train(AC2_listv[i], env_, 
+    # Not using memory: 
+    # AC2_histv.append(
+    #     train(AC2_listv[i], env_, 
+    #           num_episode=num_episode, test_interval=test_interval, num_test=num_test, num_iteration=num_iteration, 
+    #           BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug,
+    #           update_mode=UPDATE_PER_EPISODE, reward_mode=FUTURE_REWARD_YES|FUTURE_REWARD_NORMALIZE, 
+    #           loss_history=AC2_lossv[i],
+    #           save_sim_intv=save_sim_intv, save_sim_fnames=[labels[i]], 
+    #           imdir='screencaps/', save_intm_models=True)
+    # )
+    # Using memory:
+    h1,h2 = train(AC2_listv[i], env_, 
               num_episode=num_episode, test_interval=test_interval, num_test=num_test, num_iteration=num_iteration, 
               BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug,
               update_mode=UPDATE_PER_EPISODE, reward_mode=FUTURE_REWARD_YES|FUTURE_REWARD_NORMALIZE, 
               loss_history=AC2_lossv[i],
               save_sim_intv=save_sim_intv, save_sim_fnames=[labels[i]], 
-              imdir='screencaps/', save_intm_models=True)
-    )
+              imdir='screencaps/', save_intm_models=True, return_memory=True)
+    AC2_histv.append(h1)
+    memory_lane.append(h2)
     print("Finished training env with {0} agents for AC".format(env_.N))
 
 AC2_test_histv = []
@@ -271,6 +361,8 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
 # The Agent object would assume there's a subfolder named "models/".
 for i,lab in enumerate(labels):
     AC2_listv[i].save_model(taskname+'_'+lab)
+    # If using memory:
+    torch.save( Transition(*zip(*.memory_lane[i]memory)), taskname+'_'+lab+'_memory' )
 
 print("Finished running "+taskname)
 

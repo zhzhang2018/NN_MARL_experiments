@@ -27,7 +27,8 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
           update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99, 
           loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[],
-          save_sim_intv=50, save_sim_fnames=[], imdir='screencaps/', useVid=False, save_intm_models=False):
+          save_sim_intv=50, save_sim_fnames=[], imdir='screencaps/', useVid=False, save_intm_models=False,
+         return_memory=False):
     test_hists = []
     steps = 0
     if memory is None:
@@ -227,7 +228,10 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Failed to save simulation at e={0}".format(e))
             if save_intm_models and len(save_sim_fnames) > 0:
                 agent.save_model(save_sim_fnames[0]+'_{0}'.format(e))
-    return test_hists
+    if return_memory:
+        return test_hists, memory
+    else:
+        return test_hists
                 
 def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020, debug=True):
     reward_hist_hst = []
