@@ -95,7 +95,7 @@ for N_ in N_listv:
     # )
 
     # log reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
@@ -107,7 +107,7 @@ for N_ in N_listv:
         ).unwrapped
     )
     # square root reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
@@ -117,7 +117,7 @@ for N_ in N_listv:
         ).unwrapped
     )
     # shifted quadratic reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, #o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
@@ -210,7 +210,7 @@ env_listv = []
 for N_ in N_listv:
 
     # log reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
@@ -222,7 +222,7 @@ for N_ in N_listv:
         ).unwrapped
     )
     # square root reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
@@ -232,7 +232,7 @@ for N_ in N_listv:
         ).unwrapped
     )
     # shifted quadratic reward
-    env_list.append(
+    env_listv.append(
         gym.make('ConsensusEnv:ConsensusContEnv-v0', N=N_, dt=0.1, Delta=0.05, o_radius=40000,
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
