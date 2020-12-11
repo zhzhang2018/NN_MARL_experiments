@@ -48,11 +48,11 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=7#50#500
+num_episode=750#500
 test_interval=10#0
 num_test=10#50
-num_iteration=2#00
-BATCH_SIZE=2#56#64#128
+num_iteration=200
+BATCH_SIZE=256#64#128
 save_sim_intv=50
 debug=False
 num_sample=50
@@ -65,7 +65,7 @@ rand_mode = GAUSS_RAND
 
 N_listv = [N] # [5,10,20]
 if N == 0:
-    N_listv = [5,10,20]
+    N_listv = [2,5,10]#,20]
     print("Using default N")
 env_listv = []
 for N_ in N_listv:
