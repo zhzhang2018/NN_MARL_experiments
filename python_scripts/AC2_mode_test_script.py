@@ -212,7 +212,7 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
 for i,lab in enumerate(labels):
     AC2_listv[i].save_model(taskname+'_'+lab)
     # If using memory:
-    torch.save( Transition(*zip(*.memory_lane[i]memory)), taskname+'_'+lab+'_memory' )
+    torch.save( Transition(*zip(*memory_lane[i].memory)), taskname+'_'+lab+'_memory' )
 
 print("Finished running "+taskname)
 print("Trying to generate screenshots now...")
@@ -362,7 +362,7 @@ plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels,
 for i,lab in enumerate(labels):
     AC2_listv[i].save_model(taskname+'_'+lab)
     # If using memory:
-    torch.save( Transition(*zip(*.memory_lane[i]memory)), taskname+'_'+lab+'_memory' )
+    torch.save( Transition(*zip(*.memory_lane[i].memory)), taskname+'_'+lab+'_memory' )
 
 print("Finished running "+taskname)
 
