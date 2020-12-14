@@ -201,7 +201,7 @@ for i in range(len(env_listv)):
                  [labels[i]], # ['AC2_N{0}'.format(env_list[i].N)], 
                  log=False, num_iteration=num_iteration, 
                  N_list=[env_listv[i].N], # ([1 for env_ in env_list]), 
-                 bar=True, fname='plots/'+taskname+'_performance_'+labels[i])
+                 bar=True, fname='plots/'+labels[i])
 # Plot loss history
 skip=1
 plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels, 
@@ -351,7 +351,7 @@ for i in range(len(env_listv)):
                  [labels[i]], # ['AC2_N{0}'.format(env_list[i].N)], 
                  log=False, num_iteration=num_iteration, 
                  N_list=[env_listv[i].N], # ([1 for env_ in env_list]), 
-                 bar=True, fname='plots/'+taskname+'_performance_'+labels[i])
+                 bar=True, fname='plots/'+labels[i])
 # Plot loss history
 skip=1
 plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels, 

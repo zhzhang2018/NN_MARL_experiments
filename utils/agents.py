@@ -649,7 +649,15 @@ class AC2Agent(BaseAgent):
             elif self.rand_modeA == GAUSS_RAND:
                 # Should I take a sample, or should I just return the mean value?
                 distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
-                return distrb[:self.na]
+                not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
+                if not_use_rand:
+                    return distrb[:self.na]
+                else:
+                    distrb = torch.distributions.Normal(
+                        distrb[:,:self.na],
+                        torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                    )
+                    return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
@@ -717,8 +725,8 @@ class AC2Agent(BaseAgent):
             # Need to create a Gaussian distribution out of the given parameters (make sure stdev>0)... 
             # and have to multiply log of likelihood for the outcome.
             distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
-            pred_action = torch.zeros(B,self.na)
-            pred_probs = torch.zeros(B)
+#             pred_action = torch.zeros(B,self.na)
+#             pred_probs = torch.zeros(B)
 #             for i in range(B):
 #                 # ref for implementation: 
 #                 # https://discuss.pytorch.org/t/actor-critic-with-multivariate-normal-network-weights-fail-to-update/74548/2
@@ -738,8 +746,10 @@ class AC2Agent(BaseAgent):
                 torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
             )
             # Need to keep action within limits
-            pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+            pred_action = distrb.sample()
+#             print(pred_action)
             pred_probs = distrb.log_prob(pred_action)
+            pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] )
 
             ### !!!!!!! THE CORRECT ACTOR_CRITIC SHOULD USE THE ADVANTAGE, NOT THE REWARD !!!!!!!! FIXING THIS WITH AC3Agent
             ## Problem with the above is that our Critic needs action as part of the input, and we might have
@@ -870,12 +880,21 @@ class AC3Agent(BaseAgent):
                 # Expected size: (B=1, na, N) -> (na,N)?
             elif self.rand_modeA == GAUSS_RAND:
                 # Should I take a sample, or should I just return the mean value?
-                if self.centralized:
-                    distrb = self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
-                    return distrb[:,:self.na]
+                not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
+                if not_use_rand:
+                    if self.centralized:
+                        distrb = self.netA(
+                            state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                        return distrb[:,:self.na]
+                    else:
+                        distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                        return distrb[:self.na]
                 else:
-                    distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
-                    return distrb[:self.na]
+                    distrb = torch.distributions.Normal(
+                        distrb[:,:self.na],
+                        torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                    )
+                    return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
@@ -930,16 +949,17 @@ class AC3Agent(BaseAgent):
                 distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
             else:
                 distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
-            pred_action = torch.zeros(B,self.na)
-            pred_probs = torch.zeros(B)
+#             pred_action = torch.zeros(B,self.na)
+#             pred_probs = torch.zeros(B)
             distrb = torch.distributions.Normal(
                 distrb_params[:,:self.na],
                 nn.functional.softplus( distrb_params[:,self.na:] )
 #                 torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
             )
             # Need to keep action within limits
-            pred_action = torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+            pred_action = distrb.sample()
             pred_probs = distrb.log_prob(pred_action)
+            pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] )
             
             # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
 #             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)

@@ -78,7 +78,7 @@ class ConsensusContEnv(gym.Env):
         self.worldW = boundaries[1]-boundaries[0]
         self.worldH = boundaries[3]-boundaries[2]
         self.o_radius = o_radius
-        self.start_radius = min(o_radius, self.worldW/2, self.worldH/2, start_radius) # Receiver radius
+        self.start_radius = min(o_radius/2, self.worldW/2, self.worldH/2, start_radius) # Receiver radius
         
         # Parameters (weights) for loss terms
         self.sod_w = 400 # Sum-of-distance weight
