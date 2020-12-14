@@ -656,9 +656,9 @@ class AC2Agent(BaseAgent):
                     distrb = self.netA(state.view(1,-1,self.N)).squeeze()
                     distrb = torch.distributions.Normal(
                         distrb[:self.na],
-                        torch.diag( nn.functional.softplus( distrb[self.na:] ) )
+                        nn.functional.softplus( distrb[self.na:] ) 
                     )
-                    return torch.clamp( distrb.sample(), 
+                    return = torch.clamp( distrb.sample(), 
                                        self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
@@ -896,14 +896,14 @@ class AC3Agent(BaseAgent):
                         distrb = self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().view(self.N,-1)
                         distrb = torch.distributions.Normal(
                             distrb[:,:self.na],
-                            torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                            nn.functional.softplus( distrb[:,self.na:] ) 
                         )
                         return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
                     else:
                         distrb = self.netA(state.view(1,-1,self.N)).squeeze()
                         distrb = torch.distributions.Normal(
                             distrb[:self.na],
-                            torch.diag( nn.functional.softplus( distrb[self.na:] ) )
+                            nn.functional.softplus( distrb[self.na:] ) 
                         )
                         return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
