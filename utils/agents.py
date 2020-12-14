@@ -654,8 +654,8 @@ class AC2Agent(BaseAgent):
                     return distrb[:self.na]
                 else:
                     distrb = torch.distributions.Normal(
-                        distrb[:,:self.na],
-                        torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                        distrb[:self.na],
+                        torch.diag( nn.functional.softplus( distrb[self.na:] ) )
                     )
                     return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
     
@@ -891,8 +891,8 @@ class AC3Agent(BaseAgent):
                         return distrb[:self.na]
                 else:
                     distrb = torch.distributions.Normal(
-                        distrb[:,:self.na],
-                        torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                        distrb[:self.na],
+                        torch.diag( nn.functional.softplus( distrb[self.na:] ) )
                     )
                     return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
