@@ -658,7 +658,8 @@ class AC2Agent(BaseAgent):
                         distrb[:self.na],
                         torch.diag( nn.functional.softplus( distrb[self.na:] ) )
                     )
-                    return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+                    return torch.clamp( distrb.sample(), 
+                                       self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
@@ -897,14 +898,14 @@ class AC3Agent(BaseAgent):
                             distrb[:,:self.na],
                             torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
                         )
-                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
                     else:
                         distrb = self.netA(state.view(1,-1,self.N)).squeeze()
                         distrb = torch.distributions.Normal(
                             distrb[:self.na],
                             torch.diag( nn.functional.softplus( distrb[self.na:] ) )
                         )
-                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
