@@ -648,11 +648,12 @@ class AC2Agent(BaseAgent):
                 return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
             elif self.rand_modeA == GAUSS_RAND:
                 # Should I take a sample, or should I just return the mean value?
-                distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
                 not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
                 if not_use_rand:
+                    distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
                     return distrb[:self.na]
                 else:
+                    distrb = self.netA(state.view(1,-1,self.N)).squeeze()
                     distrb = torch.distributions.Normal(
                         distrb[:self.na],
                         torch.diag( nn.functional.softplus( distrb[self.na:] ) )
@@ -890,11 +891,20 @@ class AC3Agent(BaseAgent):
                         distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
                         return distrb[:self.na]
                 else:
-                    distrb = torch.distributions.Normal(
-                        distrb[:self.na],
-                        torch.diag( nn.functional.softplus( distrb[self.na:] ) )
-                    )
-                    return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+                    if self.centralized:
+                        distrb = self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().view(self.N,-1)
+                        distrb = torch.distributions.Normal(
+                            distrb[:,:self.na],
+                            torch.diag( nn.functional.softplus( distrb[:,self.na:] ) )
+                        )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
+                    else:
+                        distrb = self.netA(state.view(1,-1,self.N)).squeeze()
+                        distrb = torch.distributions.Normal(
+                            distrb[:self.na],
+                            torch.diag( nn.functional.softplus( distrb[self.na:] ) )
+                        )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] )
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
