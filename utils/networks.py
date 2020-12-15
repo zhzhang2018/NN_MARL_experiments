@@ -59,10 +59,10 @@ class RewardNet(nn.Module):
         self.RNlayers = nn.ModuleList([
             nn.Linear(ns*self.N + na, hidden),
             nn.BatchNorm1d(num_features = hidden),
-            nn.Tanh(), #nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, hidden), 
             nn.BatchNorm1d(num_features = hidden),
-            nn.Tanh(), #nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, 1)
         ])
 
