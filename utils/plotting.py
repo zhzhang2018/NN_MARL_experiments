@@ -47,7 +47,8 @@ def run_expert(env, num_iteration=200, seed=2020):
     return reward_hist_hst
 
 # Randomly give a test
-def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imdir='', debug=True, useVid=False):
+def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imdir='', 
+              debug=True, useVid=False, not_use_rand=False):
     reward_hist_hst = []
     N=env.N
     
@@ -78,13 +79,15 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
             # Try to pick an action
             if agent.centralized:
                 action = agent.select_action(state, **{
-                    'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                    'steps_done':t, 'rand':not_use_rand, #False, 
+                    'num_sample':50, 'action_space':action_space
                 }).T
             else:
                 actions = []
                 for i in range(N):
                     action = agent.select_action(state[i], **{
-                        'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                        'steps_done':t, 'rand':not_use_rand, #False, 
+                        'num_sample':50, 'action_space':action_space
                     })
                     actions.append(action)
                 action = np.array(actions).T 
