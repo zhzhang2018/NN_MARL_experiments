@@ -77,7 +77,7 @@ for i,N_ in enumerate(N_list):
                  learning_rateA=0.01, learning_rateC=0.02, mode=12088)
     )
 
-sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_m0_N{0}'.format(N_) for N_ in N_list]
+sim_fnames = ['AC2_centralizedTest_logreward_leaky03AC_m0_N{0}'.format(N_) for N_ in N_list]
 # sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_leak03A_m0_N{0}'.format(N_) for N_ in N_list]
 memory_backup = []
 AC2_hist = []
@@ -103,13 +103,13 @@ skip = 1
 plot_reward_hist([h[::skip] for h in AC2_hist], test_interval*skip, 
                  ['AC2_N{0}'.format(N_) for N_ in N_list], 
                  log=False, num_iteration=num_iteration, N_list=([N for N in N_list]), bar=True, 
-                 fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3')
+                 fname='plots/AC2_centralizedTest_logreward_leaky03AC_m0_N3')
 
 # Plot loss history
 skip=1
 plot_loss_hist(hists=[h[::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic')
+               fname='plots/AC2_centralizedTest_logreward_leaky03AC_m0_N3_critic')
 plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic_zoom')
+               fname='plots/AC2_centralizedTest_logreward_leaky03AC_m0_N3_critic_zoom')

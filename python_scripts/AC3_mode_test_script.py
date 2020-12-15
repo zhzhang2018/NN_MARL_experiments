@@ -112,7 +112,7 @@ for N_ in N_listv:
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
                  uses_boundary=uses_boundary,
-                 dist_reward_func=lambda x : (np.sqrt(x) * 2),
+                 dist_reward_func=lambda x : np.sqrt(np.abs(x)),
                  boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )
@@ -227,7 +227,7 @@ for N_ in N_listv:
               input_type=input_type, observe_type=observe_type, observe_action=O_ACTION, 
                  reward_mode=DIST_REWARD,#|ACT_REWARD,
                  uses_boundary=uses_boundary,
-                 dist_reward_func=lambda x : (np.sqrt(x) * 2),
+                 dist_reward_func=lambda x : np.sqrt(np.abs(x)),
                  boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
         ).unwrapped
     )

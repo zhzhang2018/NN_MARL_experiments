@@ -131,10 +131,10 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 # Added 1214: Push the samples to memory if no need for extra processing
                 if reward_mode & FUTURE_REWARD_YES == 0 and reward_mode & FUTURE_REWARD_NORMALIZE == 0:
                     if agent.centralized:
-                        memory.push(state, action, next_state, reward)
+                        memory.push(state, action, next_state, reward, reward)
                     else:
                         for i in range(N):
-                            memory.push(state[i], action[i], next_state[i], reward[i])
+                            memory.push(state[i], action[i], next_state[i], reward[i], reward[i])
                 # Pop off pool entries if needed
                 state_pool.pop()
                 action_pool.pop()
@@ -185,6 +185,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Took ", t, " steps to converge")
                 break
         
+        inst_reward = torch.tensor(reward_pool)
         if reward_mode & FUTURE_REWARD_YES != 0:
             for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
                 if j > 0:
@@ -196,16 +197,17 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 rvar = reward_pool.std()
                 print("Updated mean and stdev: {0} and {1}".format(rmean.numpy(), rvar.numpy()))
             reward_pool = (reward_pool - rmean) / rvar
+            inst_reward = (inst_reward - rmean) / rvar
             
         if agent.centralized:
             for j in range(len(reward_pool)):
                 memory.push(state_pool[-j-1], action_pool[-j-1], 
-                            next_state_pool[-j-1], reward_pool[-j-1])
+                            next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])
         else:
             for j in range(len(reward_pool)):
                 for i in range(N):
                     memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-                                next_state_pool[-j-1][i], reward_pool[-j-1][i])
+                                next_state_pool[-j-1][i], reward_pool[-j-1][i], inst_reward[-j-1][i])
             
 
         if update_mode == UPDATE_PER_EPISODE:

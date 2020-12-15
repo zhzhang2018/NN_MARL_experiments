@@ -989,6 +989,7 @@ class AC3Agent(BaseAgent):
         state_batch = torch.cat(batch.state)
         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        inst_reward_batch = torch.from_numpy(np.asarray(batch.inst_reward).astype('float32'))
         next_state_batch = torch.cat(batch.next_state)
 
         # Find loss for Critic
@@ -1022,7 +1023,7 @@ class AC3Agent(BaseAgent):
                 stddev = 0.1
                 added_noise = Variable(torch.randn(pred_action.size()) * stddev)
             # Modify later
-            lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean() # Sign??? (default is -, for now?)
+            lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean() # Sign??? (default is -, for now?)
         elif self.rand_modeA == GAUSS_RAND:
             # TODO: Add centralized differentiations later
             if self.mode != 1204:
@@ -1049,20 +1050,24 @@ class AC3Agent(BaseAgent):
                                       pred_action).squeeze() - self.netC(next_state_batch.view(B, -1, self.N), 
                                                                          torch.zeros_like(pred_action)).squeeze()
             elif self.mode == 1205:
-                advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - reward_batch
+                advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch
             elif self.mode == 1204:
+                ### TODO: Problem - are you epxecting reward_batch to be instantaneous, or to be cumulative? The Critic is
+                ### trained on the assumption that it's cumulative, but the second term below assumes it's instantaneous???
                 advantage = self.netC(next_state_batch.view(B, -1, self.N), 
-                                      pred_action).squeeze() + reward_batch - self.netC(state_batch.view(B, -1, self.N), 
+                                      pred_action).squeeze() + inst_reward_batch - self.netC(state_batch.view(B, -1, self.N), 
                                                                                         action_batch).squeeze()
             elif self.mode == 0:
                 # Idea: The first term is the expected value of the current action.
                 #       The latter two terms sums up to the the (hopefully accurate) expected value of previous action. 
                 advantage = self.netC(state_batch.view(B, -1, self.N), 
-                                      pred_action).squeeze() - reward_batch - self.netC(next_state_batch.view(B, -1, self.N), 
-                                                                                        torch.zeros_like(pred_action)).squeeze()*self.gamma
+                                      pred_action).squeeze() - inst_reward_batch - self.netC(
+                                                                    next_state_batch.view(B, -1, self.N), 
+                                                                    torch.zeros_like(pred_action)
+                                                                                            ).squeeze()*self.gamma
             else:
                 # Legacy update rule used by experiments prior to 1208 (at least)
-                advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - reward_batch
+                advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch #reward_batch
             lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1)
             lossA = lossA.mean()
 
