@@ -100,14 +100,16 @@ for i,N_ in enumerate(N_list):
 
 # Plot performance histories
 skip = 1
-for i in range(len(env_listv)):
-    plot_reward_hist([AC2_histv[i][::skip]], test_interval*skip, 
-                 [labels[i]], # ['AC2_N{0}'.format(env_list[i].N)], 
-                 log=False, num_iteration=num_iteration, 
-                 N_list=[env_listv[i].N], # ([1 for env_ in env_list]), 
-                 bar=True, fname='plots/'+labels[i])
+plot_reward_hist([h[::skip] for h in AC2_hist], test_interval*skip, 
+                 ['AC2_N{0}'.format(N_) for N_ in N_list], 
+                 log=False, num_iteration=num_iteration, N_list=([N for N in N_list]), bar=True, 
+                 fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3')
+
 # Plot loss history
 skip=1
-plot_loss_hist(hists=[h[::skip] for h in AC2_lossv], hist_names=labels, 
-               log=False, num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/'+taskname+'_Critic_loss')
+plot_loss_hist(hists=[h[::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
+               num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
+               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic')
+plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
+               num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
+               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic_zoom')
