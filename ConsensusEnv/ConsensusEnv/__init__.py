@@ -10,6 +10,11 @@ register(
     entry_point='ConsensusEnv.envs:ConsensusContEnv',
 )
 
+register(
+    id='CentralizedConsensusContEnv-v0',
+    entry_point='ConsensusEnv.envs:CentralizedConsensusContEnv',
+)
+
 # register(
 #     id='ConsensusEnv-extrahard-v0',
 #     entry_point='ConsensusEnv.envs:ConsensusEnvExtraHardEnv',

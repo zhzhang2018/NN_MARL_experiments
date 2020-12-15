@@ -94,7 +94,11 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
                 next_state = env.state
             next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
             state = next_state
-            cum_reward += sum(reward)
+            try:
+                cum_reward += sum(reward)
+            except:
+                cum_reward += reward
+#                 reward_hist.append([reward])
             reward_hist.append(reward)
 
             if len(f) > 0:

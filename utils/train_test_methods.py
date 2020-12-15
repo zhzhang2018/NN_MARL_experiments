@@ -26,7 +26,7 @@ FUTURE_REWARD_NORMALIZE = 0x2
 def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
           update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99, 
-          loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[],
+          loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[], reward_mean_var=(0,-1),
           save_sim_intv=50, save_sim_fnames=[], imdir='screencaps/', useVid=False, save_intm_models=False,
          return_memory=False):
     test_hists = []
@@ -42,6 +42,10 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
     np.random.seed(seed)
 #     torch.manual_seed(seed)
     test_seeds = np.random.randint(0, 5392644, size=int(num_episode // test_interval)+1)
+    
+#     rmean = 0
+#     rvar = -1
+    (rmean, rvar) = reward_mean_var
 
     for e in range(num_episode):
         steps = 0
@@ -92,31 +96,52 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 action = actions.T # Shape should already be (2,N), so we turn it into (N,2)
             
             if not(agent.centralized):
-                if reward_mode & FUTURE_REWARD_YES == 0:
-                    # Push everything directly inside if we don't use future discounts
-                    for i in range(N):
-                        memory.push(state[i], action[i], next_state[i], reward[i])
-                else:
-                    # Store and push them outside the loop
-                    state_pool.append(state)
-                    action_pool.append(action)
-                    reward_pool.append(reward)
-                    next_state_pool.append(next_state)
+                # if reward_mode & FUTURE_REWARD_YES == 0:
+                #     # Push everything directly inside if we don't use future discounts
+                #     for i in range(N):
+                #         memory.push(state[i], action[i], next_state[i], reward[i])
+                # else:
+                #     # Store and push them outside the loop
+                #     state_pool.append(state)
+                #     action_pool.append(action)
+                #     reward_pool.append(reward)
+                #     next_state_pool.append(next_state)
+                pass
             else:
+                # if reward_mode & FUTURE_REWARD_YES == 0:
+                #     # Push everything directly inside if we don't use future discounts
+                #     memory.push(state, action, next_state, reward)
+                # else:
+                #     # Store and push them outside the loop
+                #     state_pool.append(state)
+                #     action_pool.append(action)
+                #     reward_pool.append(reward)
+                #     next_state_pool.append(next_state)
                 # Centralized training should directly use the real states, instead of observations
                 reward = np.sum(reward)
-                if reward_mode & FUTURE_REWARD_YES == 0:
-                    # Push everything directly inside if we don't use future discounts
-                    memory.push(state, action, env.state, reward)
-                else:
-                    # Store and push them outside the loop
-                    state_pool.append(state)
-                    action_pool.append(action)
-                    reward_pool.append(reward)
-                    next_state_pool.append(env.state)
 
+            # Store and push them outside the loop
+            state_pool.append(state)
+            action_pool.append(action)
+            reward_pool.append(reward)
+            next_state_pool.append(next_state)
+                    
             # Update 1028: Moved this training step outside the loop
             if update_mode == UPDATE_PER_ITERATION:
+                # Added 1214: Push the samples to memory if no need for extra processing
+                if reward_mode & FUTURE_REWARD_YES == 0 and reward_mode & FUTURE_REWARD_NORMALIZE == 0:
+                    if agent.centralized:
+                        memory.push(state, action, next_state, reward)
+                    else:
+                        for i in range(N):
+                            memory.push(state[i], action[i], next_state[i], reward[i])
+                # Pop off pool entries if needed
+                state_pool.pop()
+                action_pool.pop()
+                reward_pool.pop()
+                next_state_pool.pop()
+    
+                # Learn
                 if len(memory) >= BATCH_SIZE:
                     transitions = memory.sample(BATCH_SIZE)
                     batch = Transition(*zip(*transitions))
@@ -160,23 +185,28 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Took ", t, " steps to converge")
                 break
         
-        if reward_mode & FUTURE_REWARD_YES == 1:
+        if reward_mode & FUTURE_REWARD_YES != 0:
             for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
                 if j > 0:
                     reward_pool[-j-1] += gamma * reward_pool[-j]
-            if reward_mode & FUTURE_REWARD_NORMALIZE == 1:
-                reward_pool = torch.tensor(reward_pool)
-                reward_pool = (reward_pool - reward_pool.mean()) / reward_pool.std()
+        reward_pool = torch.tensor(reward_pool)
+        if reward_mode & FUTURE_REWARD_NORMALIZE != 0:
+            if rvar == -1 and rmean == 0:
+                rmean = reward_pool.mean()
+                rvar = reward_pool.std()
+                print("Updated mean and stdev: {0} and {1}".format(rmean.numpy(), rvar.numpy()))
+            reward_pool = (reward_pool - rmean) / rvar
             
-            if agent.centralized:
-                for j in range(len(reward_pool)):
-                    memory.push(state_pool[-j-1], action_pool[-j-1], 
-                                next_state_pool[-j-1], reward_pool[-j-1])
-            else:
-                for j in range(len(reward_pool)):
-                    for i in range(N):
-                        memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-                                    next_state_pool[-j-1][i], reward_pool[-j-1][i])
+        if agent.centralized:
+            for j in range(len(reward_pool)):
+                memory.push(state_pool[-j-1], action_pool[-j-1], 
+                            next_state_pool[-j-1], reward_pool[-j-1])
+        else:
+            for j in range(len(reward_pool)):
+                for i in range(N):
+                    memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
+                                next_state_pool[-j-1][i], reward_pool[-j-1][i])
+            
 
         if update_mode == UPDATE_PER_EPISODE:
             if len(memory) >= BATCH_SIZE:
@@ -278,7 +308,11 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
                     next_state = env.state
                 next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
                 state = next_state
-                cum_reward += sum(reward)
+                try:
+                    cum_reward += sum(reward)
+                except:
+                    cum_reward += reward
+#                     reward_hist.append([reward])
                 reward_hist.append(reward)
 
                 if e % 10 == 0 and debug:

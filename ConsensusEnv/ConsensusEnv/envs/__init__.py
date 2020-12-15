@@ -1,3 +1,3 @@
 from ConsensusEnv.envs.ConsensusEnv import ConsensusEnv
-from ConsensusEnv.envs.ConsensusContEnv import ConsensusContEnv
+from ConsensusEnv.envs.ConsensusContEnv import ConsensusContEnv, CentralizedConsensusContEnv
 # from ConsensusEnv.envs.ConsensusEnv_extrahard_env import ConsensusEnvExtraHardEnv

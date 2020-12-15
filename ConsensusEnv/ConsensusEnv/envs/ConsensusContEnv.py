@@ -470,3 +470,20 @@ class ConsensusContEnv(gym.Env):
         if self.viewer:
             self.viewer.close()
             self.viewer = None
+
+class CentralizedConsensusContEnv(ConsensusContEnv):
+    """Custom Environment that follows gym interface"""
+    metadata = {'render.modes': ['human']}
+
+    # Execute one time step within the environment.
+    def step(self, action):
+        state_observs, rewards, done, _ = super().step(action)
+        return state_observs, np.sum(rewards), done, {}
+
+    def filter_neighbor_actions(self, action):
+        # Input shape: action (self.na,N) is an array recording all agents' actions at some point.
+        # Output shape: (N,self.na,N) array where the input is filtered according to adjacency matrix.
+        # You can also use this method to obtain broadcasted actioini plan.
+        # self.Adj has shape (N,N). Need to add diagonal 1s because agent should be able to see its own actions.
+        ### TODO: Check if this multiplication makes sense. Should it be a matmul??
+        return np.ones( (self.N, 1, self.N) ) * action
