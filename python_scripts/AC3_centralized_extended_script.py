@@ -36,11 +36,11 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=1#0000#500#250#500
+num_episode=10000#500#250#500
 test_interval=100#0
-num_test=2#0#10#50
-num_iteration=20#0
-BATCH_SIZE=2*1#28#64#128
+num_test=20#10#50
+num_iteration=200
+BATCH_SIZE=2*128#64#128
 save_sim_intv=200
 debug=False
 num_sample=50
