@@ -42,7 +42,7 @@ class PolicyNet(nn.Module):
 # Implements a net that tries to predict the reward for a state-action pair.
 # Should only be able to take in one input, not inputs for all agents
 class RewardNet(nn.Module):
-    def __init__(self, N, ns=2, na=2, hidden=24, leaky=0.3):
+    def __init__(self, N, ns=2, na=2, hidden=24, leaky=0.03):
         super(RewardNet, self).__init__()
         self.N = N # Number of agents
 
@@ -120,7 +120,7 @@ class RewardStateNet(nn.Module):
 
 # Implements a net that tries to predict an action (with a given range, perhaps)
 class ActionNet(nn.Module):
-    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1], leaky=0.3, rand_mode=NO_RAND):
+    def __init__(self, N, ns=2, na=5, hidden=24, action_range=[-1,1], leaky=0.01, rand_mode=NO_RAND):
         super(ActionNet, self).__init__()
         self.N = N # Number of agents
         self.range = action_range[1] - action_range[0]
@@ -141,9 +141,9 @@ class ActionNet(nn.Module):
         self.FTlayers = nn.ModuleList([nn.Flatten()])
         self.ANlayers = nn.ModuleList([
             nn.Linear(ns*self.N, hidden),
-            nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
+            nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
             nn.Linear(hidden, hidden), 
-            nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
+            nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
             nn.Linear(hidden, self.na), 
             nn.Tanh()
         ])

@@ -757,7 +757,7 @@ class AC2Agent(BaseAgent):
 
         if self.centralized:
             if self.rand_modeA == NO_RAND:
-                pred_action = self.netA(state_batch.view(B, -1, self.N)).view(B,self.N,-1) # Input: (B,no,N) and output: (B,N,na)
+                pred_action = self.netA(state_batch.view(B, -1, self.N)).view(B,self.N,-1) # Input: (B,no,N) and output: (B,N,na) ***(Should I use transpose instead?)***
                 if self.noise:
                     stddev = 0.1
                     added_noise = Variable(torch.randn(pred_action.size()) * stddev)
@@ -903,7 +903,7 @@ class AC3Agent(BaseAgent):
         self.action_range = action_range
         
         # Load models
-        if centralizedA:
+        if centralized:#A:
             if load_pathA is None:
                 self.netA = ActionNet(N, ns, na*N, hidden, action_range, rand_mode=rand_modeA)
             else:
@@ -996,7 +996,10 @@ class AC3Agent(BaseAgent):
         self.netC.train() # Critic and value predictions
         self.optimizerC.zero_grad()
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
-        lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
+        # lossC = torch.nn.functional.mse_loss(reward_batch.unsqueeze(1), next_pred_reward * self.gamma - pred_reward)
+        lossC = torch.nn.functional.mse_loss(inst_reward_batch.unsqueeze(1), pred_reward - next_pred_reward * self.gamma)
+#         lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
 #         print("Critic loss: ", lossC)
         lossC.backward()
 #         print("Last layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[0].weight.grad))
@@ -1007,70 +1010,120 @@ class AC3Agent(BaseAgent):
         self.netA.train() # Actor and action decisions
         self.optimizerA.zero_grad()
         
-        # Freeze Critic?
-#         for nfc in self.netC.RNlayers:
-#             nfc.weight.requires_grad = False
-#             nfc.bias.requires_grad = False
-        # Eval critic? 
+        # Eval critic
         self.netC.eval()
 
-        if self.rand_modeA == NO_RAND:
-            pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
-            if self.centralizedA:
-                pred_action = pred_action.view(B,self.na,self.N) 
-            if self.noise:
-                # Add Gaussian noise. 
-                stddev = 0.1
-                added_noise = Variable(torch.randn(pred_action.size()) * stddev)
-            # Modify later
-            lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean() # Sign??? (default is -, for now?)
-        elif self.rand_modeA == GAUSS_RAND:
-            # TODO: Add centralized differentiations later
-            if self.mode != 1204:
-                distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
-            else:
-                distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
-#             pred_action = torch.zeros(B,self.na)
-#             pred_probs = torch.zeros(B)
-            distrb = torch.distributions.Normal(
-                distrb_params[:,:self.na],
-                nn.functional.softplus( distrb_params[:,self.na:] )
-#                 torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
-            )
-            # Need to keep action within limits
-            pred_action = distrb.sample()
-            pred_probs = distrb.log_prob(pred_action)
-            pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] )
-            
-            # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
-#             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
-            if self.mode == 1208:
-                pred_probs = distrb.log_prob(action_batch)
-                advantage = self.netC(state_batch.view(B, -1, self.N), 
-                                      pred_action).squeeze() - self.netC(next_state_batch.view(B, -1, self.N), 
-                                                                         torch.zeros_like(pred_action)).squeeze()
-            elif self.mode == 1205:
-                advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch
-            elif self.mode == 1204:
-                ### TODO: Problem - are you epxecting reward_batch to be instantaneous, or to be cumulative? The Critic is
-                ### trained on the assumption that it's cumulative, but the second term below assumes it's instantaneous???
-                advantage = self.netC(next_state_batch.view(B, -1, self.N), 
-                                      pred_action).squeeze() + inst_reward_batch - self.netC(state_batch.view(B, -1, self.N), 
-                                                                                        action_batch).squeeze()
-            elif self.mode == 0:
-                # Idea: The first term is the expected value of the current action.
-                #       The latter two terms sums up to the the (hopefully accurate) expected value of previous action. 
-                advantage = self.netC(state_batch.view(B, -1, self.N), 
-                                      pred_action).squeeze() - inst_reward_batch - self.netC(
-                                                                    next_state_batch.view(B, -1, self.N), 
-                                                                    torch.zeros_like(pred_action)
-                                                                                            ).squeeze()*self.gamma
-            else:
-                # Legacy update rule used by experiments prior to 1208 (at least)
-                advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch #reward_batch
-            lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1)
-            lossA = lossA.mean()
+        if self.centralized:
+            if self.rand_modeA == NO_RAND:
+                pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]).view(B,self.N,-1) # Input (B,no,N); output (B,N,na) (Should I use transpose instead?)
+                if self.centralizedA:
+                    pred_action = pred_action.view(B,self.na,self.N) 
+                if self.noise:
+                    # Add Gaussian noise. 
+                    stddev = 0.1
+                    added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+                # Modify later... Sign??? (default is -, for now?)
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean()
+            elif self.rand_modeA == GAUSS_RAND:
+                # TODO: Add centralized differentiations later
+                if self.mode != 1204:
+                    distrb_params = self.netA(state_batch.view(B, -1, self.N)).view(B,self.N,-1) # Shape would be reshaped from (B,N*na*2) into (B,N,na*2)
+                else:
+                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N)).view(B,self.N,-1)
+                distrb = torch.distributions.Normal(
+                    distrb_params[:,:,:self.na],
+                    nn.functional.softplus( distrb_params[:,:,self.na:] )
+                )
+                # Need to keep action within limits
+                pred_action = distrb.sample()
+                pred_probs = distrb.log_prob(pred_action)
+                pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] ) # (B,N,na)
 
+                # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
+    #             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
+                if self.mode == 1208:
+                    pred_probs = distrb.log_prob(action_batch)
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() - self.netC(next_state_batch.view(B, -1, self.N), 
+                                                                             torch.zeros_like(pred_action)).squeeze()
+                elif self.mode == 1205:
+                    advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - reward_batch # inst_reward_batch # Idea: This mode just updates by finding advantage using the real cumulative reward
+                elif self.mode == 1204:
+                    advantage = self.netC(next_state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() + inst_reward_batch - self.netC(state_batch.view(B, -1, self.N), 
+                                                                                            action_batch).squeeze()
+                elif self.mode == 0:
+                    # Idea: The first term is the expected value of the current action.
+                    #       The latter two terms sums up to the the (hopefully accurate) expected value of previous action. 
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() - inst_reward_batch - self.netC(
+                                                                        next_state_batch.view(B, -1, self.N), 
+                                                                        torch.zeros_like(pred_action)
+                                                                                                ).squeeze()*self.gamma
+                else:
+                    # Legacy update rule used by experiments prior to 1208 (at least)
+                    advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch 
+                # advantage is going to be a scalar after this, just like the reward and Critic outputs, for centralized ones.
+                lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1).unsqueeze(2)
+                lossA = lossA.mean()
+        elif not self.centralized:
+            if self.rand_modeA == NO_RAND:
+                pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
+                if self.centralizedA:
+                    pred_action = pred_action.view(B,self.na,self.N) 
+                if self.noise:
+                    # Add Gaussian noise. 
+                    stddev = 0.1
+                    added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+                # Modify later
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean() # Sign??? (default is -, for now?)
+            elif self.rand_modeA == GAUSS_RAND:
+                # TODO: Add centralized differentiations later
+                if self.mode != 1204:
+                    distrb_params = self.netA(state_batch.view(B, -1, self.N)) # Shape would be (B,na*2)
+                else:
+                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
+    #             pred_action = torch.zeros(B,self.na)
+    #             pred_probs = torch.zeros(B)
+                distrb = torch.distributions.Normal(
+                    distrb_params[:,:self.na],
+                    nn.functional.softplus( distrb_params[:,self.na:] )
+    #                 torch.diag( nn.functional.softplus( distrb_params[:,self.na:] ) )
+                )
+                # Need to keep action within limits
+                pred_action = distrb.sample()
+                pred_probs = distrb.log_prob(pred_action)
+                pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] )
+
+                # self.netC( ) results in shape (B,1). Reward_batch has shape (B,), and needs to be expanded to avoid generating a (128,128) thing.
+    #             advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch.unsqueeze(1)
+                if self.mode == 1208:
+                    pred_probs = distrb.log_prob(action_batch)
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() - self.netC(next_state_batch.view(B, -1, self.N), 
+                                                                             torch.zeros_like(pred_action)).squeeze()
+                elif self.mode == 1205:
+                    advantage = self.netC(state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch
+                elif self.mode == 1204:
+                    ### TODO: Problem - are you epxecting reward_batch to be instantaneous, or to be cumulative? The Critic is
+                    ### trained on the assumption that it's cumulative, but the second term below assumes it's instantaneous???
+                    advantage = self.netC(next_state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() + inst_reward_batch - self.netC(state_batch.view(B, -1, self.N), 
+                                                                                            action_batch).squeeze()
+                elif self.mode == 0:
+                    # Idea: The first term is the expected value of the current action.
+                    #       The latter two terms sums up to the the (hopefully accurate) expected value of previous action. 
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          pred_action).squeeze() - inst_reward_batch - self.netC(
+                                                                        next_state_batch.view(B, -1, self.N), 
+                                                                        torch.zeros_like(pred_action)
+                                                                                                ).squeeze()*self.gamma
+                else:
+                    # Legacy update rule used by experiments prior to 1208 (at least)
+                    advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch #reward_batch
+                lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1)
+                lossA = lossA.mean()
+        else:
 #         # Here comes the fun part... the centralized and decentralized Critic would expect differently-shaped inputs...
 # #         if self.centralized:
 # #             print("Option unsupported! Centralized Critic wants to take in the environment state, but Actor needs judgement based")
@@ -1090,7 +1143,7 @@ class AC3Agent(BaseAgent):
 # #             else:
 # #         #         lossA = ( self.netC(next_state_batch.view(B, -1, self.N), torch.zeros((B, self.na, 1))) - reward_batch ).mean()
 # #                 lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - reward_batch ).mean()
-
+            pass
 #         lossA = (-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)) * pred_action).mean()
 #         print("Actor loss = reward: ", lossA)
 #         print(-self.netC(state_batch.view(B, -1, self.N), pred_action.view(B, -1, 1)).detach())
@@ -1108,11 +1161,7 @@ class AC3Agent(BaseAgent):
         self.losses.append(lossC.detach().numpy())
         self.lossesA.append(lossA.detach().numpy())
         
-        # UnFreeze Critic?
-#         for nfc in self.netC.RNlayers:
-#             nfc.weight.requires_grad = True
-#             nfc.bias.requires_grad = True
-        # UnEval critic? 
+        # UnEval critic
         self.netC.train()
         
     # Overwrite original because there are two nets now

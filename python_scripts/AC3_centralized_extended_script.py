@@ -36,12 +36,12 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=50000#500#250#500
+num_episode=1#0000#500#250#500
 test_interval=100#0
-num_test=20#10#50
-num_iteration=200
-BATCH_SIZE=2*128#64#128
-save_sim_intv=500
+num_test=2#0#10#50
+num_iteration=20#0
+BATCH_SIZE=2*1#28#64#128
+save_sim_intv=200
 debug=False
 num_sample=50
 seed=22222
@@ -51,7 +51,8 @@ action_space=[-1,1]
 # rand_mode = NO_RAND
 rand_mode = GAUSS_RAND
 
-N_list = [3]
+mode_list = [1204,1205,1208,0,-1204,-1205,-1208]
+N_list = [3]*len(mode_list)
 env_list = []
 for N_ in N_list:
     env_list.append(
@@ -71,26 +72,27 @@ for N_ in N_list:
 AC2_list = []
 for i,N_ in enumerate(N_list):
     AC2_list.append(
-        AC2Agent(device, N_, env_list[i].ns, # IMPORTANT!!! use .ns for centralized, and .nf for decentralized
+        AC3Agent(device, N_, env_list[i].ns, # IMPORTANT!!! use .ns for centralized, and .nf for decentralized
                  env_list[i].na, hidden, rand_modeA=rand_mode, centralized=True,
-                 neg_loss_sign=True,#False,
-                 learning_rateA=0.01, learning_rateC=0.02, mode=12088)
+                 neg_loss_sign=mode_list[i]<0,
+                 learning_rateA=0.01, learning_rateC=0.02, mode=mode_list[i])
     )
 
-sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_m0_N{0}'.format(N_) for N_ in N_list]
+sim_fnames = ['AC3_centralized_posGauss_logreward_difftanhC_leak03A_m{1}_N{0}'.format(
+    N_list[i],mode_list[i]) for i in range(len(N_list))]
 # sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_leak03A_m0_N{0}'.format(N_) for N_ in N_list]
-memory_backup = []
+# memory_backup = []
 AC2_hist = []
 AC2_loss = []
 for i,N_ in enumerate(N_list):
     AC2_loss.append([])
-    memory_backup.append( ReplayMemory(1000 * env_list[i].N) )
+    # memory_backup.append( ReplayMemory(1000 * env_list[i].N) )
     AC2_hist.append(
         train(AC2_list[i], env_list[i], 
               num_episode=num_episode, test_interval=test_interval, num_test=num_test, num_iteration=num_iteration, 
-              BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug, memory=memory_backup[-1],
+              BATCH_SIZE=BATCH_SIZE, num_sample=num_sample, action_space=[-1,1], debug=debug, #memory=memory_backup[-1],
               update_mode=UPDATE_PER_EPISODE, #UPDATE_PER_ITERATION,
-              reward_mode=FUTURE_REWARD_NORMALIZE,
+              reward_mode=FUTURE_REWARD_NORMALIZE|FUTURE_REWARD_YES,
 #               reward_mode=FUTURE_REWARD_YES,#|FUTURE_REWARD_NORMALIZE, #FUTURE_REWARD_YES_NORMALIZE, 
               loss_history=AC2_loss[i], #reward_mean_var=(torch.Tensor([-69600]), torch.Tensor([46290])),
               save_sim_intv=save_sim_intv, save_sim_fnames=[sim_fnames[i]], 
@@ -100,16 +102,19 @@ for i,N_ in enumerate(N_list):
 
 # Plot performance histories
 skip = 1
-plot_reward_hist([h[::skip] for h in AC2_hist], test_interval*skip, 
-                 ['AC2_N{0}'.format(N_) for N_ in N_list], 
-                 log=False, num_iteration=num_iteration, N_list=([N for N in N_list]), bar=True, 
-                 fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3')
+for i in range(len(AC2_hist)):
+    plot_reward_hist([AC2_hist[i][::skip]], test_interval*skip, 
+                     ['AC3_N{0}_m{1}'.format(N_list[i],mode_list[i])],
+                     log=False, num_iteration=num_iteration, N_list=[N_list[i]], bar=True, 
+                     fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_m{1}_N{0}'.format(N_list[i],mode_list[i]))
 
 # Plot loss history
 skip=1
-plot_loss_hist(hists=[h[::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
+plot_loss_hist(hists=[h[::skip] for h in AC2_loss], 
+               hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic')
-plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], hist_names=['AC2_N{0}'.format(N_) for N_ in N_list], log=False, 
+               fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_Critic')
+plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], 
+               hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralizedTest_logreward_tanhAC_m0_N3_critic_zoom')
+               fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_Critic')
