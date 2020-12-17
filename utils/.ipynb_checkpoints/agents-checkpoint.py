@@ -25,6 +25,36 @@ batch_size = 32
 learning_rate = 0.01 # Default value for RMSprop
 gamma = 0.99
 
+def get_memory_content(batch):
+    try: 
+        state_batch = torch.cat(batch.state)
+        if torch.is_tensor(batch.action) or torch.is_tensor(batch.action[0]):
+            action_batch = batch.action
+        else:
+            action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        if torch.is_tensor(batch.reward):
+            reward_batch = batch.reward
+            inst_reward_batch = batch.inst_reward
+        else:
+            reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+            inst_reward_batch = torch.from_numpy(np.asarray(batch.inst_reward).astype('float32'))
+        next_state_batch = torch.cat(batch.next_state)
+        return state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch
+    except:
+        state_batch = batch.state
+        if torch.is_tensor(batch.action):
+            action_batch = batch.action
+        else:
+            action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+        if torch.is_tensor(batch.reward):
+            reward_batch = batch.reward
+            inst_reward_batch = batch.inst_reward
+        else:
+            reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+            inst_reward_batch = torch.from_numpy(np.asarray(batch.inst_reward).astype('float32'))
+        next_state_batch = batch.next_state
+        return state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch
+
 class BaseAgent:
     def __init__(self, device, N):
         self.device = device
@@ -166,17 +196,18 @@ class LearnerAgent(BaseAgent):
 #         print(self.net(state.view(1,-1,self.N)), self.net(state.view(1,-1,self.N)).shape)
         with torch.no_grad():
             if self.centralized:
-                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().view(self.N,-1)# .detach().numpy().reshape((self.N,-1))
             else:
-                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() # Expected size: (B=1, na, N) -> (na,N)?
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze()#.detach().numpy() # Expected size: (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # Should I squeeze?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, _, __ = get_memory_content(batch)
+#         state_batch = torch.cat(batch.state)
+#         action_batch = torch.from_numpy(np.asarray(batch.action)) # Should I squeeze?
+#         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         # Find loss & optimize the model
         self.net.train() 
@@ -229,18 +260,19 @@ class LearnerCNNAgent(BaseAgent):
     def select_action(self, state, **kwargs):
         with torch.no_grad():
             if self.centralized:
-                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().view(self.N,-1) #.detach().numpy().reshape((self.N,-1))
             else:
-                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy() 
+                return self.net(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze()#.detach().numpy() 
                 # Expected size: (B=1, na, N) -> (B=1, na, N) -> (na,N)?
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, _,__ = get_memory_content(batch)
+#         state_batch = torch.cat(batch.state)
+#         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+#         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         # Find loss & optimize the model
         self.net.train() 
@@ -308,7 +340,7 @@ class RewardAgent(BaseAgent):
 #             print(rewards.shape, rewards.max(0))
             bestind = rewards.max(0)[1]
 #             print(bestind, actions)
-            return actions[bestind.detach()].numpy()#detach()
+            return actions[bestind.detach()]#.numpy()#detach()
     
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch[0]))
@@ -319,9 +351,10 @@ class RewardAgent(BaseAgent):
             print("I didn't learn anything!")
             return
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, _, __ = get_memory_content(batch)
+#         state_batch = torch.cat(batch.state)
+#         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+#         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         # Find loss & optimize the model
         self.net.train()
@@ -392,15 +425,16 @@ class RewardCNNAgent(BaseAgent):
             rewards = self.net(state.expand(num_sample, -1, -1), actions).view(-1)
             bestind = rewards.max(0)[1]
 #             print(bestind, actions)
-            return actions[bestind.detach()].numpy()#detach()
+            return actions[bestind.detach()]#.numpy()#detach()
     
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch[0]))
 #         print(B, len(batch[0]), len(batch), len(batch.action))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, _, __ = get_memory_content(batch)
+#         state_batch = torch.cat(batch.state)
+#         action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
+#         reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
 
         # Find loss & optimize the model
         self.net.train()
@@ -466,15 +500,13 @@ class RewardRNAgent(BaseAgent):
             bestind = rewards.max(0)[1]
 #             print(bestind, actions)
 #             print(bestind,actions, actions.shape, rewards, rewards.shape)
-            return actions[bestind.detach()].numpy()#detach()
+            return actions[bestind.detach()]#.numpy()#detach()
     
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch[0]))
 #         print(B, len(batch[0]), len(batch), len(batch.action))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, _, __ = get_memory_content(batch)
 
         # Find loss & optimize the model
         self.net.train()
@@ -525,9 +557,7 @@ class RewardActionAgent(BaseAgent):
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
 
         pred_action = self.net(state_batch.view(B, -1, self.N)) # Shape should be (B,na)??
 
@@ -572,15 +602,13 @@ class AC1Agent(BaseAgent):
     # In a future AC you could use RewardAgent's action selection instead.
     def select_action(self, state, **kwargs):
         with torch.no_grad():
-            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+            return self.netA(state.view(1,-1,self.N)).squeeze()#.detach().numpy()
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
 
         # Find loss & optimize the models
         self.optimizerA.zero_grad()
@@ -613,13 +641,17 @@ class AC1Agent(BaseAgent):
 class AC2Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False, neg_loss_sign=False,
-                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98):
+                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98, 
+                 use_Closs_thres=False, Closs_threshold=10, Closs_percentage=0.2):
         super().__init__(device, N)
         self.noise = add_noise
         self.centralized = centralized
         self.centralizedA = centralizedA
         self.rand_modeA = rand_modeA
         self.action_range = action_range
+        self.use_Closs_thres = use_Closs_thres
+        self.Closs_threshold = Closs_threshold
+        self.Closs_percentage = Closs_percentage # Haven't implemented this one yet - would require knowing complete loss history
         
         # Load models for transfer learning. If you just want to use an existing model and see results, consider self.load_models().
         if self.centralized:
@@ -662,7 +694,7 @@ class AC2Agent(BaseAgent):
         with torch.no_grad():
             if self.centralized:
                 if self.rand_modeA == NO_RAND:
-                    return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                    return self.netA(state.view(1,-1,self.N)).squeeze()#.detach().numpy()
                 elif self.rand_modeA == GAUSS_RAND:
                     # Should I take a sample, or should I just return the mean value?
                     not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
@@ -677,15 +709,15 @@ class AC2Agent(BaseAgent):
                             nn.functional.softplus( distrb[:,self.na:] ) 
                         )
                         return torch.clamp( distrb.sample(), 
-                                           self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
+                                           self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
             else:
                 if self.rand_modeA == NO_RAND:
-                    return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                    return self.netA(state.view(1,-1,self.N)).squeeze()#.detach().numpy()
                 elif self.rand_modeA == GAUSS_RAND:
                     # Should I take a sample, or should I just return the mean value?
                     not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
                     if not_use_rand:
-                        distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                        distrb = self.netA(state.view(1,-1,self.N)).squeeze()#.detach().numpy()
                         return distrb[:self.na]
                     else:
                         distrb = self.netA(state.view(1,-1,self.N)).squeeze()
@@ -694,22 +726,19 @@ class AC2Agent(BaseAgent):
                             nn.functional.softplus( distrb[self.na:] ) 
                         )
                         return torch.clamp( distrb.sample(), 
-                                           self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
+                                           self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         ### TODO: BatchNorm is known to introduce issue when batch size is 1. Find a better way to solve this, instead
         # of using the simple method below.
-        if B <= 1:
+        if B < 1:
             print("I didn't learn anything!")
             return
 #         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        next_state_batch = torch.cat(batch.next_state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
 
         # Find loss for Critic
         self.netC.train() # Critic and value predictions
@@ -738,6 +767,12 @@ class AC2Agent(BaseAgent):
 #         print("Mid   layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[1].weight.grad))
 #         print("Front layer Critic gradients after backward: ", torch.mean(self.netC.RNlayers[2].weight.grad))
         self.optimizerC.step()
+    
+        if self.use_Closs_thres and lossC > self.Closs_threshold:
+            self.losses.append(lossC.detach().numpy())
+            self.lossesA.append(0)
+#             print("Loss is too large; not training Actor this round - ", lossC)
+            return
         
         # Find loss for Actor
         self.netA.train() # Actor and action decisions
@@ -894,13 +929,17 @@ class AC2Agent(BaseAgent):
 class AC3Agent(BaseAgent):
     def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
                  learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False, neg_loss_sign=True,
-                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98):
+                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98, 
+                 use_Closs_thres=False, Closs_threshold=10, Closs_percentage=0.2):
         super().__init__(device, N)
         self.noise = add_noise
         self.centralized = centralized
         self.centralizedA = centralizedA
         self.rand_modeA = rand_modeA
         self.action_range = action_range
+        self.use_Closs_thres = use_Closs_thres
+        self.Closs_threshold = Closs_threshold
+        self.Closs_percentage = Closs_percentage # Haven't implemented this one yet - would require knowing complete loss history
         
         # Load models
         if centralized:#A:
@@ -967,14 +1006,14 @@ class AC3Agent(BaseAgent):
                             distrb[:,:self.na],
                             nn.functional.softplus( distrb[:,self.na:] ) 
                         )
-                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
                     else:
                         distrb = self.netA(state.view(1,-1,self.N)).squeeze()
                         distrb = torch.distributions.Normal(
                             distrb[:self.na],
                             nn.functional.softplus( distrb[self.na:] ) 
                         )
-                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze().detach().numpy()
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
 #             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
     
     # Steps over gradients from memory replay
@@ -982,15 +1021,11 @@ class AC3Agent(BaseAgent):
         B = kwargs.get('B', len(batch))
         ### TODO: BatchNorm is known to introduce issue when batch size is 1. Find a better way to solve this, instead
         # of using the simple method below.
-        if B <= 1:
+        if B < 1:
             print("I didn't learn anything!")
             return
         
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
-        inst_reward_batch = torch.from_numpy(np.asarray(batch.inst_reward).astype('float32'))
-        next_state_batch = torch.cat(batch.next_state)
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
 
         # Find loss for Critic
         self.netC.train() # Critic and value predictions
@@ -1230,10 +1265,7 @@ class AC4Agent(BaseAgent):
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
-        next_state_batch = torch.cat(batch.next_state)
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
 
         self.net.train() 
         self.optimizer.zero_grad()
@@ -1259,7 +1291,281 @@ class AC4Agent(BaseAgent):
         #     nfc.weight.requires_grad = False
         #     nfc.bias.requires_grad = False
         
+
+# Actor-Critic attempt #5
+# Properties: Chooses action using negative advantage. 
+#             Updates Reward based on state, but not action.
+# The argument "mode" is here to implement different update functions. When using them, it might be advised to train with
+# normalized but non-cumulative rewards.
+class AC5Agent(BaseAgent):
+    def __init__(self, device, N, ns=2, na=5, hidden=24, action_range=[-1,1], add_noise=False, rand_modeA=NO_RAND, 
+                 learning_rateA=0.01, learning_rateC=0.02, centralized=False, centralizedA=False, neg_loss_sign=True,
+                 prevN=10, load_pathA=None, load_pathC=None, mode=0, gamma=0.98, 
+                 use_Closs_thres=False, Closs_threshold=10, Closs_percentage=0.2):
+        super().__init__(device, N)
+        self.noise = add_noise
+        self.centralized = centralized
+        self.centralizedA = centralizedA
+        self.rand_modeA = rand_modeA
+        self.action_range = action_range
+        self.use_Closs_thres = use_Closs_thres
+        self.Closs_threshold = Closs_threshold
+        self.Closs_percentage = Closs_percentage # Haven't implemented this one yet 
+        
+        # Load models
+        if centralized:
+            self.netA = ActionNet(N, ns, na*N, hidden, action_range, rand_mode=rand_modeA)
+            self.netC = ValueNet(N, ns, hidden)
+            self.netT = TransitionNet(N, ns, na*N, hidden)
+        else:
+            self.netA = ActionNet(N, ns, na, hidden, action_range, rand_mode=rand_modeA)
+            self.netC = ValueNet(N, ns, hidden)
+            self.netT = TransitionNet(N, ns, na, hidden)
             
+        self.optimizerA = torch.optim.RMSprop(self.netA.parameters(), lr=learning_rateA)
+        self.optimizerC = torch.optim.RMSprop(self.netC.parameters(), lr=learning_rateC)
+        self.optimizerT = torch.optim.RMSprop(self.netT.parameters(), lr=learning_rateC)
+        self.schedulerA = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerA)
+        self.schedulerC = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerC)
+        self.schedulerT = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizerT)
+        self.ns = ns
+        self.na = na
+        self.mode = mode
+        self.gamma = gamma
+        if neg_loss_sign:
+            self.loss_sign = -1
+        else:
+            self.loss_sign = 1
+        self.name = 'AC5Agent'
+        
+    # Picks an action based on given state... similar to LearnerAgent that directly outputs an action.
+    # In a future AC you could use RewardAgent's action selection instead.
+    def select_action(self, state, **kwargs):
+        with torch.no_grad():
+            if self.rand_modeA == NO_RAND:
+                if self.centralized:
+                    return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                else:
+                    return self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy()
+                # Expected size: (B=1, na, N) -> (na,N)?
+            elif self.rand_modeA == GAUSS_RAND:
+                # Should I take a sample, or should I just return the mean value?
+                not_use_rand = kwargs.get('rand', False) # Using a reverse logic here to avoid modifying old code
+                if not_use_rand:
+                    if self.centralized:
+                        distrb = self.netA(
+                            state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().detach().numpy().reshape((self.N,-1))
+                        return distrb[:,:self.na]
+                    else:
+                        distrb = self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+                        return distrb[:self.na]
+                else:
+                    if self.centralized:
+                        distrb = self.netA(state.view(1,-1,self.N)[:,:self.ns,:]).squeeze().view(self.N,-1)
+                        distrb = torch.distributions.Normal(
+                            distrb[:,:self.na],
+                            nn.functional.softplus( distrb[:,self.na:] ) 
+                        )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
+                    else:
+                        distrb = self.netA(state.view(1,-1,self.N)).squeeze()
+                        distrb = torch.distributions.Normal(
+                            distrb[:self.na],
+                            nn.functional.softplus( distrb[self.na:] ) 
+                        )
+                        return torch.clamp( distrb.sample(), self.action_range[0], self.action_range[1] ).squeeze()#.detach().numpy()
+#             return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+    
+    # Steps over gradients from memory replay
+    def optimize_model(self, batch, **kwargs):
+        B = kwargs.get('B', len(batch))
+        if B < 1:
+            print("I didn't learn anything!")
+            return
+        
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
+
+        # Find loss for Critic
+        self.netC.train() # Critic and value predictions
+        self.optimizerC.zero_grad()
+        pred_reward = self.netC( state_batch.view(B, -1, self.N) )
+        next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N) )
+        if self.mode == 1209:
+            lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
+        else:
+            lossC = torch.nn.functional.mse_loss(inst_reward_batch.unsqueeze(1), pred_reward - next_pred_reward * self.gamma)
+        lossC.backward()
+        self.optimizerC.step()
+        
+        # Find loss for state transition matrix
+        self.netT.train()
+        self.optimizerT.zero_grad()
+        pred_next_state = self.netT(state_batch, action_batch)
+        lossT = lossC = torch.nn.functional.mse_loss(next_state_batch, pred_next_state)
+        lossT.backward()
+        self.optimizerT.step()
+        
+        # Find loss for Actor
+        self.netA.train() # Actor and action decisions
+        self.optimizerA.zero_grad()
+        
+        # Eval critic
+        self.netC.eval()
+        self.netT.eval()
+
+        if self.centralized:
+            if self.rand_modeA == NO_RAND:
+                pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]).view(B,self.N,-1) # Input (B,no,N); output (B,N,na) (Should I use transpose instead?)
+                if self.centralizedA:
+                    pred_action = pred_action.view(B,self.na,self.N) 
+                if self.noise:
+                    # Add Gaussian noise. 
+                    stddev = 0.1
+                    added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+                # Modify later... Sign??? (default is -, for now?)
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean()
+            elif self.rand_modeA == GAUSS_RAND:
+                # TODO: Add centralized differentiations later
+                if self.mode != 1204:
+                    distrb_params = self.netA(state_batch.view(B, -1, self.N)).view(B,self.N,-1) # Shape would be reshaped from (B,N*na*2) into (B,N,na*2)
+                else:
+                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N)).view(B,self.N,-1)
+                distrb = torch.distributions.Normal(
+                    distrb_params[:,:,:self.na],
+                    nn.functional.softplus( distrb_params[:,:,self.na:] )
+                )
+                # Need to keep action within limits
+                pred_action = distrb.sample()
+                pred_probs = distrb.log_prob(pred_action)
+                pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] ) # (B,N,na)
+                
+
+                if self.mode == 1208:
+                    pred_probs = distrb.log_prob(action_batch)
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(
+                        state_batch.view(B, -1, self.N)
+                                ).squeeze() - self.netC(
+                                            pred_next_state.view(B, -1, self.N)
+                                                        ).squeeze()
+                elif self.mode == 1205:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(pred_next_state.view(B, -1, self.N)).squeeze() - reward_batch
+                elif self.mode == 1204:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(
+                        pred_next_state.view(B, -1, self.N), 
+                                          ).squeeze() + inst_reward_batch - self.netC(
+                                                                        state_batch.view(B, -1, self.N)
+                                                                                     ).squeeze()
+                elif self.mode == 0:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          ).squeeze() - inst_reward_batch - self.netC(
+                                                                        pred_next_state.view(B, -1, self.N)
+                                                                                        ).squeeze()*self.gamma
+                else:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    # Legacy update rule used by experiments prior to 1208 (at least)
+                    advantage = self.netC(pred_next_state.view(B, -1, self.N)).squeeze() - inst_reward_batch 
+                # advantage is going to be a scalar after this, just like the reward and Critic outputs, for centralized ones.
+                lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1).unsqueeze(2)
+                lossA = lossA.mean()
+        elif not self.centralized:
+            if self.rand_modeA == NO_RAND:
+                pred_action = self.netA(state_batch.view(B, -1, self.N)[:,:self.ns,:]) # Input shape should be (B,no,N) and output be (B,na)
+                if self.centralizedA:
+                    pred_action = pred_action.view(B,self.na,self.N) 
+                if self.noise:
+                    # Add Gaussian noise. 
+                    stddev = 0.1
+                    added_noise = Variable(torch.randn(pred_action.size()) * stddev)
+                # Modify later
+                lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean() # Sign??? (default is -, for now?)
+            elif self.rand_modeA == GAUSS_RAND:
+                if self.mode != 1204:
+                    distrb_params = self.netA(state_batch.view(B, -1, self.N)) 
+                else:
+                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
+                distrb = torch.distributions.Normal(
+                    distrb_params[:,:self.na],
+                    nn.functional.softplus( distrb_params[:,self.na:] )
+                )
+                # Need to keep action within limits
+                pred_action = distrb.sample()
+                pred_probs = distrb.log_prob(pred_action)
+                pred_action = torch.clamp( pred_action, self.action_range[0], self.action_range[1] ) # (B,N,na)
+                
+
+                if self.mode == 1208:
+                    pred_probs = distrb.log_prob(action_batch)
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(
+                        state_batch.view(B, -1, self.N)
+                                ).squeeze() - self.netC(
+                                            pred_next_state.view(B, -1, self.N)
+                                                        ).squeeze()
+                elif self.mode == 1205:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(pred_next_state.view(B, -1, self.N)).squeeze() - reward_batch
+                elif self.mode == 1204:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(
+                        pred_next_state.view(B, -1, self.N), 
+                                          ).squeeze() + inst_reward_batch - self.netC(
+                                                                        state_batch.view(B, -1, self.N)
+                                                                                     ).squeeze()
+                elif self.mode == 0:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                                          ).squeeze() - inst_reward_batch - self.netC(
+                                                                        pred_next_state.view(B, -1, self.N)
+                                                                                        ).squeeze()*self.gamma
+                else:
+                    pred_next_state = self.netT(state_batch, pred_action)
+                    # Legacy update rule used by experiments prior to 1208 (at least)
+                    advantage = self.netC(pred_next_state.view(B, -1, self.N)).squeeze() - inst_reward_batch 
+                # advantage is going to be a scalar after this, just like the reward and Critic outputs, for centralized ones.
+                lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1).unsqueeze(2)
+                lossA = lossA.mean()
+                
+        lossA.backward()
+        self.optimizerA.step()
+    
+        self.losses.append(lossC.detach().numpy())
+        self.lossesA.append(lossA.detach().numpy())
+        
+        # UnEval critic
+        self.netC.train()
+        self.netT.train()
+        
+    # Overwrite original because there are two nets now
+    def set_train(self, train):
+        if train:
+            self.netA.train()
+            self.netC.train()
+        else:
+            self.netA.eval()
+            self.netC.eval()
+    
+    def save_model(self, suffix="", agent_path=None):
+        if not os.path.exists('models/'):
+            os.makedirs('models/')
+
+        if len(suffix) <= 0:
+            suffix = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+        if agent_path is None:
+            agent_path = "models/{}_{}".format(self.name, suffix)
+        print('Saving model to {}'.format(agent_path))
+        torch.save(self.netA.state_dict(), agent_path+'_A')
+        torch.save(self.netC.state_dict(), agent_path+'_C')
+
+    def load_model(self, agent_path):
+        print('Loading model from {}'.format(agent_path))
+        if agent_path is not None:
+            self.netA.load_state_dict(torch.load(agent_path+'_A'))
+            self.netC.load_state_dict(torch.load(agent_path+'_C'))
+
 # DDPG attempt
 # References: https://github.com/ghliu/pytorch-ddpg/blob/master/ddpg.py, model.py, util.py
 # Properties: Chooses action using a net where loss is defined as negative predicted reward from Critic. 
@@ -1308,16 +1614,13 @@ class DDPGAgent(BaseAgent):
     # Picks an action based on given state. Use the non-target Actor for this purpose.
     def select_action(self, state, **kwargs):
         with torch.no_grad():
-            return self.netA(state.view(1,-1,self.N)).squeeze().detach().numpy()
+            return self.netA(state.view(1,-1,self.N)).squeeze()#.detach().numpy()
     
     # Steps over gradients from memory replay
     def optimize_model(self, batch, **kwargs):
         B = kwargs.get('B', len(batch))
         # This class would assume that the optimal action is stored in batch input
-        state_batch = torch.cat(batch.state)
-        next_state_batch = torch.cat(batch.next_state)
-        action_batch = torch.from_numpy(np.asarray(batch.action)) # cat? to device?
-        reward_batch = torch.from_numpy(np.asarray(batch.reward).astype('float32'))
+        state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
         
         # Find target network judgements
         target_next_reward = self.netCT(next_state_batch.view(B, -1, self.N), 

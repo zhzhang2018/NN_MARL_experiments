@@ -38,6 +38,7 @@ class ConsensusContEnv(gym.Env):
     def __init__(self, N=5, dt=0.1, v=0.5, v_max=1, boundaries=[-1.6,1.6,-1,1], Delta=0.02, o_radius=0.4, max_iter=200,
                  input_type=U_ACCELERATION, observe_type=O_VELOCITY, additional_features=[], observe_action=O_NO_ACTION,
                  reward_mode=ALL_REWARD, uses_boundary=True, boundary_policy=HARD_PENALTY, finish_reward_policy=END_ON_CONSENSUS,
+                 graph_laplacian_terminate_policy=False,
                  start_radius=0.5, dist_reward_func=None):
         super(ConsensusContEnv, self).__init__()
         
@@ -68,6 +69,7 @@ class ConsensusContEnv(gym.Env):
         self.uses_boundary = uses_boundary
         self.boundary_policy = boundary_policy
         self.finish_reward_policy = finish_reward_policy
+        self.graph_laplacian_terminate_policy = graph_laplacian_terminate_policy
 
         self.dt = dt
         self.v = v
@@ -261,20 +263,21 @@ class ConsensusContEnv(gym.Env):
             self.state[2:4] = np.maximum(self.state[2:4], 
                 (np.array([[self.boundaries[0],self.boundaries[2]]]).T - self.state[:2]) / self.dt)
 
-            # Re-calculate distance
-            diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
-            diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
         else:
             # Don't need to recalculate distances, but need to shift the agents back to the center if needed.
             # Current method: Fixate the first agent to the center of the environment, and move all other agents'
             # positions based on that. Effectively leader-follower without the leader knowing that it's the leader.
             # Should work as long as nothing in the process (observation, reward, etc) is absolute-position-based.
+            self.state = temp_state
             offset = self.state[:2,[0]]
             self.state[:2] = self.state[:2] - offset
             # if out_of_bound.all():
             #     # Don't do anything if everything's within bound
             #     pass
             # else:
+        # Re-calculate distance
+        diff = self.state.T.reshape((self.N,self.ns,1)) - self.state.reshape((1,self.ns,self.N))
+        diff_norm = np.linalg.norm(diff[:,:2,:], ord=2, axis=1)
 
         # Then we want a reward as a list.
         # If we want it as a tensor, then it's better to offload it to a separate function.
@@ -294,6 +297,7 @@ class ConsensusContEnv(gym.Env):
         diff = diff * self.Adj.reshape((self.N,1,self.N))
 
         # Take the rows that can be observed as output
+        ### Note: If you want to use the unclipped states, then you should deep copy temp_state before self.state is modified.
         state_observs = self.attach_nonlin_features(diff[:,:self.no,:], action, temp_state)
 
         # Return: Observation, reward, done or not, ???
@@ -306,6 +310,12 @@ class ConsensusContEnv(gym.Env):
         elif self.boundary_policy == HARD_PENALTY and (out_of_bound == 0).all():
             done = True
             rewards += (out_of_bound - 1) * self.aoob_reward 
+        # Early termination if graph is disconnected
+        if self.graph_laplacian_terminate_policy:
+            eigs = sorted(np.linalg.eig(np.diag(np.sum(self.Adj, axis=0)) - self.Adj)[0])
+            if eigs[1] < 1e-8: # Set a threshold near 0
+                done = True
+                rewards -= self.aoob_reward * 10
         return state_observs, rewards, done, {}
     
     def find_rewards(self, diff, action, rewards=None):

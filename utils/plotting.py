@@ -90,9 +90,15 @@ def plot_test(agent, env, fnames=[], num_iteration=100, action_space=[-1,1], imd
                         'num_sample':50, 'action_space':action_space
                     })
                     actions.append(action)
-                action = np.array(actions).T 
+                if torch.is_tensor(action):
+                    action = torch.cat(actions).view(-1,env.N)#.T
+                else:
+                    action = np.array(actions).T 
 
-            next_state, reward, done, _ = env.step(action)
+            if torch.is_tensor(action):
+                next_state, reward, done, _ = env.step(action.detach().numpy())
+            else:
+                next_state, reward, done, _ = env.step(action)
             if agent.centralized:
                 next_state = env.state
             next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()

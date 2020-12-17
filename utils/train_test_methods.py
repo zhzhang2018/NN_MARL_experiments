@@ -79,12 +79,16 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                         'steps_done':t, 'num_sample':50, 'action_space':action_space
                     })
                     actions.append(action)
-                action = np.array(actions).T # Shape would become (2,N)
-                # print(action, actions)
-                # action = actions
-                # action = np.array(actions)
+                if torch.is_tensor(action):
+                    action = torch.cat(actions).view(-1,env.N)#.T
+                else:
+                    action = np.array(actions).T # Shape would become (2,N)
 
-            next_state, reward, done, _ = env.step(action)
+            if torch.is_tensor(action):
+                next_state, reward, done, _ = env.step(action.detach().numpy())
+            else:
+                next_state, reward, done, _ = env.step(action)
+                
             if agent.centralized:
                 next_state = env.state
             next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()
@@ -120,12 +124,6 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 # Centralized training should directly use the real states, instead of observations
                 reward = np.sum(reward)
 
-            # Store and push them outside the loop
-            state_pool.append(state)
-            action_pool.append(action)
-            reward_pool.append(reward)
-            next_state_pool.append(next_state)
-                    
             # Update 1028: Moved this training step outside the loop
             if update_mode == UPDATE_PER_ITERATION:
                 # Added 1214: Push the samples to memory if no need for extra processing
@@ -135,12 +133,6 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                     else:
                         for i in range(N):
                             memory.push(state[i], action[i], next_state[i], reward[i], reward[i])
-                # Pop off pool entries if needed
-                state_pool.pop()
-                action_pool.pop()
-                reward_pool.pop()
-                next_state_pool.pop()
-    
                 # Learn
                 if len(memory) >= BATCH_SIZE:
                     transitions = memory.sample(BATCH_SIZE)
@@ -171,10 +163,38 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 except:
                     pass
             elif update_mode == UPDATE_ON_POLICY:
-                # This case would ditch sampling, and just update by the current thing
-                print("Not implemented!!!!")
-                return None
-
+                # This case would ditch sampling, and just update by the current thing.
+                # Note that methods that use future cumulative reward would be highly incompatible with this...
+                if not(agent.centralized) or reward_mode & FUTURE_REWARD_YES != 0:
+                    print("Error: Update-on-policy might be incompatible with decentralized planning or cumulative reward")
+                    return None
+                if rvar == -1 and rmean == 0 and reward_mode & FUTURE_REWARD_NORMALIZE != 0:
+                    rvar = np.abs(reward)
+                    rmean = reward
+                reward = (reward - rmean) / rvar
+                batch = Transition(state, action, next_state, reward, reward)
+#                 transitions = [batch,batch]
+#                 agent.optimize_model(Transition(*zip(*transitions)), **{'B':2})
+                transitions = [batch,batch]
+                agent.optimize_model(batch, **{'B':1})
+                loss_history[-1].append(agent.losses[:])
+                agent.losses=[]
+                try:
+                    loss_historyA[-1].append(agent.lossesA[:])
+                    agent.lossesA=[]
+                except:
+                    pass
+                
+            else:
+                # Store and push them outside the loop
+                state_pool.append(state)
+                if torch.is_tensor(action):
+                    action_pool.append(action.detach().numpy())
+                else:
+                    action_pool.append(action)
+                reward_pool.append(reward)
+                next_state_pool.append(next_state)
+                    
             state = next_state
             steps += 1
 
@@ -185,6 +205,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 print("Took ", t, " steps to converge")
                 break
         
+        # Now outside the iteration loop - prepare for per-episode trainings
         inst_reward = torch.tensor(reward_pool)
         if reward_mode & FUTURE_REWARD_YES != 0:
             for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
@@ -303,9 +324,15 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
                             'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
                         })
                         actions.append(action)
-                    action = np.array(actions).T 
+                    if torch.is_tensor(action):
+                        action = torch.cat(actions).view(-1,env.N)#.T
+                    else:
+                        action = np.array(actions).T 
 
-                next_state, reward, done, _ = env.step(action)
+                if torch.is_tensor(action):
+                    next_state, reward, done, _ = env.step(action.detach().numpy())
+                else:
+                    next_state, reward, done, _ = env.step(action)
                 if agent.centralized:
                     next_state = env.state
                 next_state = Variable(torch.from_numpy(next_state).float()) # The float() probably avoids bug in net.forward()

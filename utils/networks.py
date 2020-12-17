@@ -6,39 +6,6 @@ NO_RAND = 0
 UNIF_RAND = 1
 GAUSS_RAND = 2
 
-# Ref: https://github.com/Finspire13/pytorch-policy-gradient-example/blob/master/pg.py
-# Implements a network that takes state observations as input, and outputs (discrete) policy/action probabilities.
-# Note that PyTorch requires knowing the exact size of each layer...
-class PolicyNet(nn.Module):
-    def __init__(self, N, ns=2, na=5, hidden=24):
-        super(PolicyNet, self).__init__()
-        self.N = N # Number of agents
-
-        self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
-        self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
-        self.fc2 = nn.Linear(hidden, hidden)
-        self.fc3 = nn.Linear(hidden, na)  # For DQN, we have to output a value or a probabilty of some sorts for each action
-        
-        self.FTlayers = [self.flt]
-        self.PNlayers = [self.fc1,self.fc2,self.fc3]
-
-    def forward(self, x): #, y):
-        # print(self.flt(x)) # Won't work!?!?
-        # print(torch.flatten(x))
-#         x = F.relu(self.fc1(torch.cat((torch.flatten(x), y), 0)))
-#         x = F.relu(self.fc1(torch.flatten(x)))
-        ### Update: Modified to a more recent version - see below 11/04
-#         x = torch.relu(self.fc1(self.flt(x)))
-#         x = torch.relu(self.fc2(x))
-#         x = torch.sigmoid(self.fc3(x)) # Range = [0,1]
-        for flt in self.FTlayers:
-            x = flt(x)
-        for fc in self.PNlayers[:-1]:
-            x = torch.relu(fc(x))
-        x = self.PNlayers[-1](x)
-        x = torch.sigmoid(x) # Range = [0,1]
-        return x
-
 # Implements a net that tries to predict the reward for a state-action pair.
 # Should only be able to take in one input, not inputs for all agents
 class RewardNet(nn.Module):
@@ -58,10 +25,10 @@ class RewardNet(nn.Module):
         self.FTlayers = nn.ModuleList([nn.Flatten(), nn.Flatten()])
         self.RNlayers = nn.ModuleList([
             nn.Linear(ns*self.N + na, hidden),
-            nn.BatchNorm1d(num_features = hidden),
+#             nn.BatchNorm1d(num_features = hidden),
             nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, hidden), 
-            nn.BatchNorm1d(num_features = hidden),
+#             nn.BatchNorm1d(num_features = hidden),
             nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, 1)
         ])
@@ -96,26 +63,52 @@ class RewardNet(nn.Module):
         # x = torch.sigmoid(x) # Range = [0,1]
         return x
 
-# Implements a net that tries to predict the reward for state alone
-class RewardStateNet(nn.Module):
-    def __init__(self, N, ns=2, hidden=24):
+class CheaterRewardNet(nn.Module):
+    def __init__(self, N, ns=2, na=2, hidden=24, leaky=0.03):
         super(RewardNet, self).__init__()
         self.N = N # Number of agents
-
-        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.mean = 0
+        self.std = 1
+        self.FTlayers = nn.ModuleList([nn.Flatten(), nn.Flatten()])
         self.RNlayers = nn.ModuleList([
-            nn.Linear(ns*self.N, hidden),
+            nn.Linear(ns*self.N + na, hidden),
+#             nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, hidden), 
+#             nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
             nn.Linear(hidden, 1)
         ])
 
     def forward(self, x, y):
-        for flt in self.FTlayers:
-            x = flt(x)
-        for i in range(len(self.RNlayers)-1):
-            x = torch.relu(self.RNlayers[i](x))
-        x = self.RNlayers[-1](x)
-#         x = torch.sigmoid(x) # Range = [0,1] for normalized state values
+        # Uses the actual environment step mechanism to output the exact reward
+#         # Updated 11/04 to suit for more flexible children
+#         x = self.FTlayers[0](x)
+#         y = self.FTlayers[1](y)
+#         x = torch.cat( (x, y), dim=1 )
+        return x
+
+# Implements a net that tries to predict the reward from state.
+# It's questionable whether this is the same thing as when RewardNet's action input is all zeros. 
+class ValueNet(nn.Module):
+    def __init__(self, N, ns=2, hidden=24, leaky=0.03):
+        super(ValueNet, self).__init__()
+        self.N = N # Number of agents
+        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.VNlayers = nn.ModuleList([
+            nn.Linear(ns*self.N, hidden),
+#             nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
+            nn.Linear(hidden, hidden), 
+#             nn.BatchNorm1d(num_features = hidden),
+            nn.LeakyReLU(negative_slope=leaky), # nn.Tanh(), # nn.ReLU(),
+            nn.Linear(hidden, 1)
+        ])
+
+    def forward(self, x):
+        x = self.FTlayers[0](x)
+        for i in range(len(self.VNlayers)):
+            x = self.VNlayers[i](x)
         return x
 
 # Implements a net that tries to predict an action (with a given range, perhaps)
@@ -176,6 +169,35 @@ class ActionNet(nn.Module):
             x_var = x[self.na:]
             return torch.cat((x_mean, x_var))
 
+# Implements a net that transits from state to state
+class TransitionNet(nn.Module):
+    def __init__(self, N, ns=2, na=2, hidden=24, action_range=[-1,1], leaky=0.01):
+        super(TransitionNet, self).__init__()
+        self.N = N # Number of agents
+#         self.range = action_range[1] - action_range[0]
+#         self.offset = 0.5*(action_range[0]+action_range[1])
+#         self.rand_mode = rand_mode
+        self.na = na
+        
+        self.FTlayers = nn.ModuleList([nn.Flatten(), nn.Flatten()])
+        self.TNlayers = nn.ModuleList([
+            nn.Linear(ns*self.N + na, hidden),
+            nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
+#             nn.Linear(hidden, hidden), 
+#             nn.Tanh(), # nn.LeakyReLU(negative_slope=leaky), # # nn.ReLU(),
+            nn.Linear(hidden, ns*self.N), 
+            nn.Tanh()
+        ])
+        
+    def forward(self, x, y):
+        print(x.shape, y.shape)
+        x = self.FTlayers[0](x)
+        y = self.FTlayers[1](y)
+        print(x.shape, y.shape)
+        x = torch.cat( (x, y), dim=1 )
+        for fc in self.TNlayers:
+            x = fc(x)
+        return x
 
 # Implements a net where actor and critic shares the first layer. (Not used yet)
 # Here, the critic network doesn't depend on action no more. 
@@ -458,3 +480,58 @@ class ActionCNN(nn.Module):
         # x = torch.sigmoid(x) # Range = [0,1]
         x = x.view((-1, self.na)) # --> (B, na)
         return x * self.range * 0.5 + self.offset
+
+# Ref: https://github.com/Finspire13/pytorch-policy-gradient-example/blob/master/pg.py
+# Implements a network that takes state observations as input, and outputs (discrete) policy/action probabilities.
+# Note that PyTorch requires knowing the exact size of each layer...
+class PolicyNet(nn.Module):
+    def __init__(self, N, ns=2, na=5, hidden=24):
+        super(PolicyNet, self).__init__()
+        self.N = N # Number of agents
+
+        self.flt = nn.Flatten() # Turns 2D input observation into 1D, so we can use linear layers
+        self.fc1 = nn.Linear(ns*self.N, hidden) # Take in flattened input
+        self.fc2 = nn.Linear(hidden, hidden)
+        self.fc3 = nn.Linear(hidden, na)  # For DQN, we have to output a value or a probabilty of some sorts for each action
+        
+        self.FTlayers = [self.flt]
+        self.PNlayers = [self.fc1,self.fc2,self.fc3]
+
+    def forward(self, x): #, y):
+        # print(self.flt(x)) # Won't work!?!?
+        # print(torch.flatten(x))
+#         x = F.relu(self.fc1(torch.cat((torch.flatten(x), y), 0)))
+#         x = F.relu(self.fc1(torch.flatten(x)))
+        ### Update: Modified to a more recent version - see below 11/04
+#         x = torch.relu(self.fc1(self.flt(x)))
+#         x = torch.relu(self.fc2(x))
+#         x = torch.sigmoid(self.fc3(x)) # Range = [0,1]
+        for flt in self.FTlayers:
+            x = flt(x)
+        for fc in self.PNlayers[:-1]:
+            x = torch.relu(fc(x))
+        x = self.PNlayers[-1](x)
+        x = torch.sigmoid(x) # Range = [0,1]
+        return x
+
+# Implements a net that tries to predict the reward for state alone
+class RewardStateNet(nn.Module):
+    def __init__(self, N, ns=2, hidden=24):
+        super(RewardNet, self).__init__()
+        self.N = N # Number of agents
+
+        self.FTlayers = nn.ModuleList([nn.Flatten()])
+        self.RNlayers = nn.ModuleList([
+            nn.Linear(ns*self.N, hidden),
+            nn.Linear(hidden, hidden), 
+            nn.Linear(hidden, 1)
+        ])
+
+    def forward(self, x, y):
+        for flt in self.FTlayers:
+            x = flt(x)
+        for i in range(len(self.RNlayers)-1):
+            x = torch.relu(self.RNlayers[i](x))
+        x = self.RNlayers[-1](x)
+#         x = torch.sigmoid(x) # Range = [0,1] for normalized state values
+        return x

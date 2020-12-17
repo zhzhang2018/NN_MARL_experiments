@@ -36,11 +36,11 @@ observe_type = O_VELOCITY
 observe_action = O_ACTION
 reward_mode=ALL_REWARD
 
-num_episode=10000#500#250#500
-test_interval=100#0
-num_test=20#10#50
-num_iteration=200
-BATCH_SIZE=2*128#64#128
+num_episode=10#000#500#250#500
+test_interval=1#00#0
+num_test=2#0#10#50
+num_iteration=20#0
+BATCH_SIZE=2*1#28#64#128
 save_sim_intv=200
 debug=False
 num_sample=50
@@ -64,7 +64,8 @@ for N_ in N_list:
                  dist_reward_func=lambda x : (np.log(np.abs(x)+1)),
 #                  dist_reward_func=lambda x : np.sqrt(np.abs(x)),
 #                  dist_reward_func=lambda x : (np.abs(x) + 2) * (np.abs(x) + 2), # * (np.abs(x) + 2) * (np.abs(x) + 2),
-                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS
+                 boundary_policy=SOFT_PENALTY, finish_reward_policy=REWARD_IF_CONSENSUS,
+                 graph_laplacian_terminate_policy=True
         ).unwrapped
     )
 #     env_list[-1].mov_w = 100
@@ -78,7 +79,7 @@ for i,N_ in enumerate(N_list):
                  learning_rateA=0.01, learning_rateC=0.02, mode=mode_list[i])
     )
 
-sim_fnames = ['AC3_centralized_posGauss_logreward_difftanhC_leak03A_m{1}_N{0}'.format(
+sim_fnames = ['AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_m{1}_N{0}'.format(
     N_list[i],mode_list[i]) for i in range(len(N_list))]
 # sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_leak03A_m0_N{0}'.format(N_) for N_ in N_list]
 # memory_backup = []
@@ -106,15 +107,15 @@ for i in range(len(AC2_hist)):
     plot_reward_hist([AC2_hist[i][::skip]], test_interval*skip, 
                      ['AC3_N{0}_m{1}'.format(N_list[i],mode_list[i])],
                      log=False, num_iteration=num_iteration, N_list=[N_list[i]], bar=True, 
-                     fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_m{1}_N{0}'.format(N_list[i],mode_list[i]))
+                     fname='plots/'+sim_fnames[i])
 
 # Plot loss history
 skip=1
 plot_loss_hist(hists=[h[::skip] for h in AC2_loss], 
                hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_Critic')
+               fname='plots/AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
 plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], 
                hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC3_centralized_posGauss_logreward_difftanhC_leak03A_Critic')
+               fname='plots/AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
