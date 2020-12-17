@@ -28,6 +28,7 @@ gamma = 0.99
 def get_memory_content(batch):
     try: 
         state_batch = torch.cat(batch.state)
+#         print(state_batch.shape, len(batch.state), batch.state[0].shape)
         if torch.is_tensor(batch.action) or torch.is_tensor(batch.action[0]):
             action_batch = batch.action
         else:
@@ -1384,12 +1385,14 @@ class AC5Agent(BaseAgent):
             return
         
         state_batch, action_batch, reward_batch, inst_reward_batch, next_state_batch = get_memory_content(batch)
+        state_batch = state_batch.view(B, -1, self.N)
+        next_state_batch = next_state_batch.view(B, -1, self.N)
 
         # Find loss for Critic
         self.netC.train() # Critic and value predictions
         self.optimizerC.zero_grad()
-        pred_reward = self.netC( state_batch.view(B, -1, self.N) )
-        next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N) )
+        pred_reward = self.netC( state_batch )
+        next_pred_reward = self.netC( next_state_batch )
         if self.mode == 1209:
             lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
         else:
@@ -1400,8 +1403,9 @@ class AC5Agent(BaseAgent):
         # Find loss for state transition matrix
         self.netT.train()
         self.optimizerT.zero_grad()
-        pred_next_state = self.netT(state_batch, action_batch)
-        lossT = lossC = torch.nn.functional.mse_loss(next_state_batch, pred_next_state)
+#         print(state_batch.shape, action_batch.shape)
+        pred_next_state = self.netT(state_batch, action_batch).view(B,-1,self.N)
+        lossT = torch.nn.functional.mse_loss(next_state_batch, pred_next_state)
         lossT.backward()
         self.optimizerT.step()
         
@@ -1427,9 +1431,9 @@ class AC5Agent(BaseAgent):
             elif self.rand_modeA == GAUSS_RAND:
                 # TODO: Add centralized differentiations later
                 if self.mode != 1204:
-                    distrb_params = self.netA(state_batch.view(B, -1, self.N)).view(B,self.N,-1) # Shape would be reshaped from (B,N*na*2) into (B,N,na*2)
+                    distrb_params = self.netA(state_batch).view(B,self.N,-1) # Shape would be reshaped from (B,N*na*2) into (B,N,na*2)
                 else:
-                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N)).view(B,self.N,-1)
+                    distrb_params = self.netA(next_state_batch).view(B,self.N,-1)
                 distrb = torch.distributions.Normal(
                     distrb_params[:,:,:self.na],
                     nn.functional.softplus( distrb_params[:,:,self.na:] )
@@ -1456,11 +1460,11 @@ class AC5Agent(BaseAgent):
                     advantage = self.netC(
                         pred_next_state.view(B, -1, self.N), 
                                           ).squeeze() + inst_reward_batch - self.netC(
-                                                                        state_batch.view(B, -1, self.N)
+                                                                        state_batch
                                                                                      ).squeeze()
                 elif self.mode == 0:
                     pred_next_state = self.netT(state_batch, pred_action)
-                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                    advantage = self.netC(state_batch
                                           ).squeeze() - inst_reward_batch - self.netC(
                                                                         pred_next_state.view(B, -1, self.N)
                                                                                         ).squeeze()*self.gamma
@@ -1484,9 +1488,9 @@ class AC5Agent(BaseAgent):
                 lossA = ( self.netC(next_state_batch.view(B, -1, self.N), pred_action) - inst_reward_batch ).mean() # Sign??? (default is -, for now?)
             elif self.rand_modeA == GAUSS_RAND:
                 if self.mode != 1204:
-                    distrb_params = self.netA(state_batch.view(B, -1, self.N)) 
+                    distrb_params = self.netA(state_batch) 
                 else:
-                    distrb_params = self.netA(next_state_batch.view(B, -1, self.N))
+                    distrb_params = self.netA(next_state_batch)
                 distrb = torch.distributions.Normal(
                     distrb_params[:,:self.na],
                     nn.functional.softplus( distrb_params[:,self.na:] )
@@ -1513,11 +1517,11 @@ class AC5Agent(BaseAgent):
                     advantage = self.netC(
                         pred_next_state.view(B, -1, self.N), 
                                           ).squeeze() + inst_reward_batch - self.netC(
-                                                                        state_batch.view(B, -1, self.N)
+                                                                        state_batch
                                                                                      ).squeeze()
                 elif self.mode == 0:
                     pred_next_state = self.netT(state_batch, pred_action)
-                    advantage = self.netC(state_batch.view(B, -1, self.N), 
+                    advantage = self.netC(state_batch 
                                           ).squeeze() - inst_reward_batch - self.netC(
                                                                         pred_next_state.view(B, -1, self.N)
                                                                                         ).squeeze()*self.gamma

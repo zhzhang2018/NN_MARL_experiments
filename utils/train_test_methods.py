@@ -221,6 +221,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             inst_reward = (inst_reward - rmean) / rvar
             
         if agent.centralized:
+#             print(state_pool[0].shape, action_pool[0].shape)
             for j in range(len(reward_pool)):
                 memory.push(state_pool[-j-1], action_pool[-j-1], 
                             next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])

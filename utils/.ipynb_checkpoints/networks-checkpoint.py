@@ -190,10 +190,10 @@ class TransitionNet(nn.Module):
         ])
         
     def forward(self, x, y):
-        print(x.shape, y.shape)
+#         print(x.shape, y.shape)
         x = self.FTlayers[0](x)
         y = self.FTlayers[1](y)
-        print(x.shape, y.shape)
+#         print(x.shape, y.shape)
         x = torch.cat( (x, y), dim=1 )
         for fc in self.TNlayers:
             x = fc(x)
