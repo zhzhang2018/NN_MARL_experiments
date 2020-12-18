@@ -51,7 +51,7 @@ action_space=[-1,1]
 # rand_mode = NO_RAND
 rand_mode = GAUSS_RAND
 
-mode_list = [0,1208]#[1204,1205,1208,0,-1204,-1205,-1208]
+mode_list = [1204,1205,1208,0,-1204,-1205,-1208]
 N_list = [3]*len(mode_list)
 env_list = []
 for N_ in N_list:
@@ -73,13 +73,13 @@ for N_ in N_list:
 AC2_list = []
 for i,N_ in enumerate(N_list):
     AC2_list.append(
-        AC2Agent(device, N_, env_list[i].ns, # IMPORTANT!!! use .ns for centralized, and .nf for decentralized
+        AC3Agent(device, N_, env_list[i].ns, # IMPORTANT!!! use .ns for centralized, and .nf for decentralized
                  env_list[i].na, hidden, rand_modeA=rand_mode, centralized=True,
-                 # neg_loss_sign=mode_list[i]<0,
+                 neg_loss_sign=mode_list[i]<0,
                  learning_rateA=0.01, learning_rateC=0.02, mode=mode_list[i])
     )
 
-sim_fnames = ['AC2_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_m{1}_N{0}'.format(
+sim_fnames = ['AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_m{1}_N{0}'.format(
     N_list[i],mode_list[i]) for i in range(len(N_list))]
 # sim_fnames = ['AC2_centralizedTest_logreward_tanhAC_leak03A_m0_N{0}'.format(N_) for N_ in N_list]
 # memory_backup = []
@@ -112,10 +112,10 @@ for i in range(len(AC2_hist)):
 # Plot loss history
 skip=1
 plot_loss_hist(hists=[h[::skip] for h in AC2_loss], 
-               hist_names=['AC2_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
+               hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
+               fname='plots/AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
 plot_loss_hist(hists=[h[500::skip] for h in AC2_loss], 
-               hist_names=['AC2_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
+               hist_names=['AC3_N{0}_m{1}'.format(N_,mode_list[i]) for i,N_ in enumerate(N_list)], log=False, 
                num_iteration=num_iteration, update_mode=UPDATE_PER_ITERATION, bar=False,
-               fname='plots/AC2_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
+               fname='plots/AC3_centralized_posGauss_logreward_Lapeig_difftanhC_leak03A_Critic')
