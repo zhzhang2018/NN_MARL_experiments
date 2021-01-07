@@ -15,6 +15,16 @@ register(
     entry_point='ConsensusEnv.envs:CentralizedConsensusContEnv',
 )
 
+register(
+    id='ConvergeContEnv-v0',
+    entry_point='ConsensusEnv.envs:ConvergeContEnv',
+)
+
+register(
+    id='CentralizedConvergeContEnv-v0',
+    entry_point='ConsensusEnv.envs:CentralizedConvergeContEnv',
+)
+
 # register(
 #     id='ConsensusEnv-extrahard-v0',
 #     entry_point='ConsensusEnv.envs:ConsensusEnvExtraHardEnv',

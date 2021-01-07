@@ -23,17 +23,20 @@ FUTURE_REWARD_NO = 0x0
 FUTURE_REWARD_YES_NORMALIZE = 0x3
 FUTURE_REWARD_NORMALIZE = 0x2
 
-def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, 
+def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iteration=200, iteration_cutoff=0, 
           BATCH_SIZE=128, num_sample=50, action_space=[-1,1], debug=True, memory=None, seed=2020,
           update_mode=UPDATE_PER_ITERATION, reward_mode=FUTURE_REWARD_NO, gamma=0.99, 
           loss_history=[], loss_historyA=[], lr_history=[], lr_historyA=[], reward_mean_var=(0,-1),
           save_sim_intv=50, save_sim_fnames=[], imdir='screencaps/', useVid=False, save_intm_models=False,
+          not_use_rand_in_action=False, not_use_rand_in_test=True, 
          return_memory=False):
     test_hists = []
     steps = 0
     if memory is None:
         ### UPDate 11/05: Changed memory size based on number of agents
         memory = ReplayMemory(1000 * env.N)
+    if iteration_cutoff <= 0:
+        iteration_cutoff = num_iteration # Save all iterations into the memory
     
     # Values that would be useful
     N = env.N
@@ -70,13 +73,13 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             # Try to pick an action, react, and store the resulting behavior in the pool here
             if agent.centralized:
                 action = agent.select_action(state, **{
-                        'steps_done':t, 'num_sample':50, 'action_space':action_space
+                        'steps_done':t, 'num_sample':50, 'action_space':action_space, 'rand':not_use_rand_in_action
                     }).T
             else:
                 actions = []
                 for i in range(N):
                     action = agent.select_action(state[i], **{
-                        'steps_done':t, 'num_sample':50, 'action_space':action_space
+                        'steps_done':t, 'num_sample':50, 'action_space':action_space, 'rand':not_use_rand_in_action
                     })
                     actions.append(action)
                 if torch.is_tensor(action):
@@ -220,16 +223,26 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
             reward_pool = (reward_pool - rmean) / rvar
             inst_reward = (inst_reward - rmean) / rvar
             
+        # Update: 0106 added option to only push the first few iterations into the memory.
+        # if agent.centralized:
+        # #             print(state_pool[0].shape, action_pool[0].shape)
+        #     for j in range(len(reward_pool)):
+        #         memory.push(state_pool[-j-1], action_pool[-j-1], 
+        #                     next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])
+        # else:
+        #     for j in range(len(reward_pool)):
+        #         for i in range(N):
+        #             memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
+        #                         next_state_pool[-j-1][i], reward_pool[-j-1][i], inst_reward[-j-1][i])
         if agent.centralized:
-#             print(state_pool[0].shape, action_pool[0].shape)
-            for j in range(len(reward_pool)):
-                memory.push(state_pool[-j-1], action_pool[-j-1], 
-                            next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])
+            for j in range(iteration_cutoff):
+                memory.push(state_pool[j], action_pool[j], 
+                            next_state_pool[j], reward_pool[j], inst_reward[j])
         else:
-            for j in range(len(reward_pool)):
+            for j in range(iteration_cutoff):
                 for i in range(N):
-                    memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-                                next_state_pool[-j-1][i], reward_pool[-j-1][i], inst_reward[-j-1][i])
+                    memory.push(state_pool[j][i], action_pool[j][i], 
+                                next_state_pool[j][i], reward_pool[j][i], inst_reward[j][i])
             
 
         if update_mode == UPDATE_PER_EPISODE:
@@ -266,7 +279,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
         if e % test_interval == 0:
             print("Test result at episode ", e, ": ")
             test_hist = test(agent, env, num_test, num_iteration, num_sample, action_space, 
-                             seed=test_seeds[int(e/test_interval)], debug=debug)
+                             seed=test_seeds[int(e/test_interval)], debug=debug, not_use_rand_in_action=not_use_rand_in_test)
             test_hists.append(test_hist)
         
         # Save demos of simulation if wanted
@@ -275,7 +288,7 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 fnames = [f+'_{0}'.format(e) for f in save_sim_fnames]
                 plot_test(agent, env, fnames=fnames,
                     num_iteration=num_iteration, action_space=action_space, imdir=imdir,
-                    debug=debug, useVid=useVid)
+                    debug=debug, useVid=useVid, not_use_rand=not_use_rand_in_test)
                 for f in fnames:
                     os.system('ffmpeg -y -pattern_type glob -i "'+imdir+f+'*.jpg" '+f+'.gif')
             except:
@@ -287,7 +300,8 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
     else:
         return test_hists
                 
-def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020, debug=True):
+def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space=[-1,1], seed=2020, debug=True, 
+        not_use_rand_in_action=False):
     reward_hist_hst = []
     N=env.N
     # To affect pytorch, refer to further documentations: https://github.com/pytorch/pytorch/issues/7068
@@ -313,16 +327,18 @@ def test(agent, env, num_test=20, num_iteration=200, num_sample=50, action_space
                 env.render()
 
             for t in range(num_iteration):  
-                # Try to pick an action, react, and store the resulting behavior in the pool here
+                # Try to pick an action, react, and store the resulting behavior in the pool here.
+                # If not_use_rand_in_action is set to True, then presumably the agents would take the middle of
+                # its action range as the action it takes.
                 if agent.centralized:
                     action = agent.select_action(state, **{
-                            'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                            'steps_done':t, 'rand':not_use_rand_in_action, 'num_sample':50, 'action_space':action_space
                         }).T
                 else:
                     actions = []
                     for i in range(N):
                         action = agent.select_action(state[i], **{
-                            'steps_done':t, 'rand':False, 'num_sample':50, 'action_space':action_space
+                            'steps_done':t, 'rand':not_use_rand_in_action, 'num_sample':50, 'action_space':action_space
                         })
                         actions.append(action)
                     if torch.is_tensor(action):
