@@ -1042,7 +1042,8 @@ class AC3Agent(BaseAgent):
         pred_reward = self.netC( state_batch.view(B, -1, self.N), action_batch.view(B, -1, 1) )
         next_pred_reward = self.netC( next_state_batch.view(B, -1, self.N), torch.zeros_like(action_batch.view(B, -1, 1)) )
         # lossC = torch.nn.functional.mse_loss(reward_batch.unsqueeze(1), next_pred_reward * self.gamma - pred_reward)
-        lossC = torch.nn.functional.mse_loss(inst_reward_batch.unsqueeze(1), pred_reward - next_pred_reward * self.gamma)
+#         lossC = torch.nn.functional.mse_loss(inst_reward_batch.unsqueeze(1), pred_reward - next_pred_reward * self.gamma)
+        lossC = torch.nn.functional.mse_loss(inst_reward_batch, pred_reward - next_pred_reward * self.gamma)
 #         lossC = torch.nn.functional.mse_loss(reward_batch, pred_reward.squeeze())
 #         print("Critic loss: ", lossC)
         lossC.backward()
@@ -1108,7 +1109,10 @@ class AC3Agent(BaseAgent):
                     # Legacy update rule used by experiments prior to 1208 (at least)
                     advantage = self.netC(next_state_batch.view(B, -1, self.N), pred_action).squeeze() - inst_reward_batch 
                 # advantage is going to be a scalar after this, just like the reward and Critic outputs, for centralized ones.
-                lossA = self.loss_sign * pred_probs * advantage.unsqueeze(1).unsqueeze(2)
+                lossA = self.loss_sign * pred_probs * (advantage.unsqueeze(1).unsqueeze(2))
+#                 lossA = self.loss_sign * pred_probs * (advantage.detach())
+                # Optional - add entropy term
+                lossA -= self.loss_sign * pred_probs * 0.5
                 lossA = lossA.mean()
         elif not self.centralized:
             if self.rand_modeA == NO_RAND:

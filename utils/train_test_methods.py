@@ -175,11 +175,14 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                     rvar = np.abs(reward)
                     rmean = reward
                 reward = (reward - rmean) / rvar
-                batch = Transition(state, action, next_state, reward, reward)
-#                 transitions = [batch,batch]
-#                 agent.optimize_model(Transition(*zip(*transitions)), **{'B':2})
-                transitions = [batch,batch]
+                
+                batch = Transition(state, action, next_state, [[reward]], [[reward]])
                 agent.optimize_model(batch, **{'B':1})
+#                 batch = Transition(state, action, next_state, reward, reward)
+# #                 transitions = [batch,batch]
+# #                 agent.optimize_model(Transition(*zip(*transitions)), **{'B':2})
+#                 transitions = [batch,batch]
+#                 agent.optimize_model(batch, **{'B':1})
                 loss_history[-1].append(agent.losses[:])
                 agent.losses=[]
                 try:
@@ -209,40 +212,44 @@ def train(agent, env, num_episode=50, test_interval=25, num_test=20, num_iterati
                 break
         
         # Now outside the iteration loop - prepare for per-episode trainings
-        inst_reward = torch.tensor(reward_pool)
-        if reward_mode & FUTURE_REWARD_YES != 0:
-            for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
-                if j > 0:
-                    reward_pool[-j-1] += gamma * reward_pool[-j]
-        reward_pool = torch.tensor(reward_pool)
-        if reward_mode & FUTURE_REWARD_NORMALIZE != 0:
-            if rvar == -1 and rmean == 0:
-                rmean = reward_pool.mean()
-                rvar = reward_pool.std()
-                print("Updated mean and stdev: {0} and {1}".format(rmean.numpy(), rvar.numpy()))
-            reward_pool = (reward_pool - rmean) / rvar
-            inst_reward = (inst_reward - rmean) / rvar
-            
-        # Update: 0106 added option to only push the first few iterations into the memory.
-        # if agent.centralized:
-        # #             print(state_pool[0].shape, action_pool[0].shape)
-        #     for j in range(len(reward_pool)):
-        #         memory.push(state_pool[-j-1], action_pool[-j-1], 
-        #                     next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])
-        # else:
-        #     for j in range(len(reward_pool)):
-        #         for i in range(N):
-        #             memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
-        #                         next_state_pool[-j-1][i], reward_pool[-j-1][i], inst_reward[-j-1][i])
-        if agent.centralized:
-            for j in range(iteration_cutoff):
-                memory.push(state_pool[j], action_pool[j], 
-                            next_state_pool[j], reward_pool[j], inst_reward[j])
-        else:
-            for j in range(iteration_cutoff):
-                for i in range(N):
-                    memory.push(state_pool[j][i], action_pool[j][i], 
-                                next_state_pool[j][i], reward_pool[j][i], inst_reward[j][i])
+        if update_mode == UPDATE_ON_POLICY:
+            pass
+        elif update_mode == UPDATE_PER_EPISODE: #se:
+            inst_reward = torch.tensor(reward_pool)
+            if reward_mode & FUTURE_REWARD_YES != 0:
+                for j in range(len(reward_pool)): ### IT was previously miswritten as "reward". Retard bug that might had effects
+                    if j > 0:
+                        reward_pool[-j-1] += gamma * reward_pool[-j]
+            reward_pool = torch.tensor(reward_pool)
+            if reward_mode & FUTURE_REWARD_NORMALIZE != 0:
+                if rvar == -1 and rmean == 0:
+                    rmean = reward_pool.mean()
+                    rvar = reward_pool.std()
+                    print("Updated mean and stdev: {0} and {1}".format(rmean.numpy(), rvar.numpy()))
+                reward_pool = (reward_pool - rmean) / rvar
+                inst_reward = (inst_reward - rmean) / rvar
+
+            # Update: 0106 added option to only push the first few iterations into the memory.
+            # if agent.centralized:
+            # #             print(state_pool[0].shape, action_pool[0].shape)
+            #     for j in range(len(reward_pool)):
+            #         memory.push(state_pool[-j-1], action_pool[-j-1], 
+            #                     next_state_pool[-j-1], reward_pool[-j-1], inst_reward[-j-1])
+            # else:
+            #     for j in range(len(reward_pool)):
+            #         for i in range(N):
+            #             memory.push(state_pool[-j-1][i], action_pool[-j-1][i], 
+            #                         next_state_pool[-j-1][i], reward_pool[-j-1][i], inst_reward[-j-1][i])
+            if agent.centralized:
+                for j in range(iteration_cutoff):
+                    print(j, len(reward_pool))
+                    memory.push(state_pool[j], action_pool[j], 
+                                next_state_pool[j], reward_pool[j], inst_reward[j])
+            else:
+                for j in range(iteration_cutoff):
+                    for i in range(N):
+                        memory.push(state_pool[j][i], action_pool[j][i], 
+                                    next_state_pool[j][i], reward_pool[j][i], inst_reward[j][i])
             
 
         if update_mode == UPDATE_PER_EPISODE:
